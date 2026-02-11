@@ -15,15 +15,6 @@ pub struct StorageDevice {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
-pub struct FileRecord {
-    pub blake3_hash: String,
-    pub file_size: i64,
-    pub representative_name: String,
-    pub extension: String,
-    pub created_at: String,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
 pub struct FileLocation {
     pub id: i64,
     pub blake3_hash: String,

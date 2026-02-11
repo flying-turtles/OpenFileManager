@@ -72,16 +72,6 @@ pub async fn set_device_type(pool: &DbPool, device_id: &str, device_type: &str) 
     Ok(())
 }
 
-pub async fn get_device_by_mount(pool: &DbPool, mount_point: &str) -> Result<Option<StorageDevice>, AppError> {
-    let device = sqlx::query_as::<_, StorageDevice>(
-        "SELECT * FROM storage_devices WHERE mount_point = ?"
-    )
-    .bind(mount_point)
-    .fetch_optional(pool)
-    .await?;
-    Ok(device)
-}
-
 // --- File queries ---
 
 pub async fn upsert_file(pool: &DbPool, hash: &str, size: i64, name: &str, ext: &str) -> Result<(), AppError> {
