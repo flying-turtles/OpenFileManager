@@ -89,7 +89,7 @@ pub enum ScanEvent {
     Started { total_files: u64 },
     Progress { scanned: u64, total: u64 },
     FileHashed { path: String, hash: String },
-    Finished { scanned: u64, hashed: u64 },
+    Finished { scanned: u64, hashed: u64, added: u64, removed: u64 },
     Error { message: String },
     Cancelled,
 }

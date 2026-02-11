@@ -7,6 +7,8 @@ export interface ScanState {
   total: number;
   scanned: number;
   hashed: number;
+  added: number;
+  removed: number;
   lastFile: string;
   error: string | null;
   finished: boolean;
@@ -17,6 +19,8 @@ const initialState: ScanState = {
   total: 0,
   scanned: 0,
   hashed: 0,
+  added: 0,
+  removed: 0,
   lastFile: "",
   error: null,
   finished: false,
@@ -57,6 +61,8 @@ export function useScanProgress() {
           finished: true,
           scanned: event.Finished.scanned,
           hashed: event.Finished.hashed,
+          added: event.Finished.added,
+          removed: event.Finished.removed,
         }));
         scanningRef.current = false;
       } else if ("Error" in event) {

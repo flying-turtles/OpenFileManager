@@ -60,6 +60,6 @@ export type ScanEvent =
   | { Started: { total_files: number } }
   | { Progress: { scanned: number; total: number } }
   | { FileHashed: { path: string; hash: string } }
-  | { Finished: { scanned: number; hashed: number } }
+  | { Finished: { scanned: number; hashed: number; added: number; removed: number } }
   | { Error: { message: string } }
   | "Cancelled";

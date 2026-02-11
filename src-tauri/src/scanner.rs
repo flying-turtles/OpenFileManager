@@ -39,6 +39,8 @@ pub async fn run_scan(
 
     let mut scanned: u64 = 0;
     let mut hashed: u64 = 0;
+    let mut added: u64 = 0;
+    let mut seen_paths: Vec<String> = Vec::with_capacity(files.len());
     let is_quick = mode == "quick";
 
     for file_path in &files {
@@ -92,11 +94,17 @@ pub async fn run_scan(
             .to_string_lossy()
             .to_lowercase();
 
+        seen_paths.push(relative_path.clone());
+
+        // Check if location already exists in DB
+        let existing = db::get_existing_location(&pool, &device_id, &relative_path).await.ok().flatten();
+        let is_new = existing.is_none();
+
         // Quick mode: skip if size+mtime match existing record
         if is_quick {
-            if let Ok(Some(existing)) = db::get_existing_location(&pool, &device_id, &relative_path).await {
-                let size_matches = existing.file_size == file_size;
-                let mtime_matches = existing.modified_at.as_deref() == modified_at.as_deref();
+            if let Some(ref ex) = existing {
+                let size_matches = ex.file_size == file_size;
+                let mtime_matches = ex.modified_at.as_deref() == modified_at.as_deref();
                 if size_matches && mtime_matches {
                     continue;
                 }
@@ -126,6 +134,7 @@ pub async fn run_scan(
                     )
                     .await?;
                     hashed += 1;
+                    if is_new { added += 1; }
                     let _ = channel.send(ScanEvent::FileHashed {
                         path: relative_path,
                         hash,
@@ -152,9 +161,21 @@ pub async fn run_scan(
                 "deferred",
             )
             .await?;
+            if is_new { added += 1; }
         }
     }
 
-    let _ = channel.send(ScanEvent::Finished { scanned, hashed });
+    // Remove locations for files that no longer exist under scanned path
+    let scan_prefix = target
+        .strip_prefix(&mount_point)
+        .unwrap_or(&target)
+        .to_string_lossy()
+        .to_string();
+    let removed = db::remove_stale_locations(&pool, &device_id, &scan_prefix, &seen_paths).await?;
+    if removed > 0 {
+        db::cleanup_orphaned_files(&pool).await?;
+    }
+
+    let _ = channel.send(ScanEvent::Finished { scanned, hashed, added, removed });
     Ok(())
 }

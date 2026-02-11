@@ -76,7 +76,9 @@ export function Scanner({ initialDevice }: Props) {
 
       {progress.finished && (
         <div className="scan-result">
-          Scan complete: {progress.scanned} files scanned, {progress.hashed} hashed.
+          <span>
+            Scan complete: {progress.scanned} scanned, {progress.hashed} hashed, {progress.added} added, {progress.removed} removed
+          </span>
           <button onClick={progress.reset}>New Scan</button>
         </div>
       )}

@@ -252,6 +252,73 @@ pub async fn get_waste_candidates(pool: &DbPool, threshold: i64) -> Result<Vec<W
     Ok(rows)
 }
 
+pub async fn remove_stale_locations(
+    pool: &DbPool,
+    device_id: &str,
+    path_prefix: &str,
+    seen_paths: &[String],
+) -> Result<u64, AppError> {
+    // Delete locations under the scanned prefix that weren't seen
+    // Use a prefix match with LIKE (escape % and _ in prefix)
+    let prefix_pattern = format!(
+        "{}%",
+        path_prefix.replace('%', "\\%").replace('_', "\\_")
+    );
+
+    if seen_paths.is_empty() {
+        // Nothing seen = everything under prefix is gone
+        let res = sqlx::query(
+            "DELETE FROM file_locations WHERE device_id = ? AND file_path LIKE ? ESCAPE '\\'"
+        )
+        .bind(device_id)
+        .bind(&prefix_pattern)
+        .execute(pool)
+        .await?;
+        return Ok(res.rows_affected());
+    }
+
+    // Build a temp table approach: insert seen paths, delete those not in it
+    // For simplicity, batch delete with NOT IN (chunked to avoid SQLite limits)
+    let mut total_deleted: u64 = 0;
+    // Get all existing locations under prefix
+    let existing = sqlx::query_as::<_, (i64, String)>(
+        "SELECT id, file_path FROM file_locations WHERE device_id = ? AND file_path LIKE ? ESCAPE '\\'"
+    )
+    .bind(device_id)
+    .bind(&prefix_pattern)
+    .fetch_all(pool)
+    .await?;
+
+    let seen_set: std::collections::HashSet<&str> = seen_paths.iter().map(|s| s.as_str()).collect();
+    let stale_ids: Vec<i64> = existing
+        .iter()
+        .filter(|(_, path)| !seen_set.contains(path.as_str()))
+        .map(|(id, _)| *id)
+        .collect();
+
+    for chunk in stale_ids.chunks(500) {
+        let placeholders: String = chunk.iter().map(|_| "?").collect::<Vec<_>>().join(",");
+        let sql = format!("DELETE FROM file_locations WHERE id IN ({})", placeholders);
+        let mut query = sqlx::query(&sql);
+        for id in chunk {
+            query = query.bind(id);
+        }
+        let res = query.execute(pool).await?;
+        total_deleted += res.rows_affected();
+    }
+
+    Ok(total_deleted)
+}
+
+pub async fn cleanup_orphaned_files(pool: &DbPool) -> Result<u64, AppError> {
+    let res = sqlx::query(
+        "DELETE FROM files WHERE blake3_hash NOT IN (SELECT DISTINCT blake3_hash FROM file_locations)"
+    )
+    .execute(pool)
+    .await?;
+    Ok(res.rows_affected())
+}
+
 pub async fn get_dashboard_stats(pool: &DbPool) -> Result<DashboardStats, AppError> {
     let total_files: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM files")
         .fetch_one(pool)
