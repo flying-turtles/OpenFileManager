@@ -143,6 +143,21 @@ body {
   padding: 16px;
 }
 
+.device-card.disconnected {
+  opacity: 0.5;
+}
+
+.device-badges {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+}
+
+.badge-disconnected {
+  background: rgba(149, 165, 166, 0.2);
+  color: var(--text-muted);
+}
+
 .device-header {
   display: flex;
   justify-content: space-between;
@@ -282,6 +297,27 @@ button:disabled {
 
 .form-group input {
   width: 100%;
+}
+
+.path-input-row {
+  display: flex;
+  gap: 8px;
+  border-radius: var(--radius);
+  transition: box-shadow 0.15s;
+}
+
+.path-input-row input {
+  flex: 1;
+}
+
+.path-input-row.drag-over {
+  box-shadow: 0 0 0 2px var(--accent);
+}
+
+.drop-hint {
+  font-size: 12px;
+  color: var(--accent);
+  margin-top: 4px;
 }
 
 .mode-toggle {

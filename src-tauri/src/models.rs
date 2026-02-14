@@ -12,6 +12,8 @@ pub struct StorageDevice {
     pub is_removable: bool,
     pub first_seen: String,
     pub last_seen: String,
+    #[sqlx(default)]
+    pub is_connected: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, FromRow)]

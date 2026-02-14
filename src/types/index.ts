@@ -8,6 +8,7 @@ export interface StorageDevice {
   is_removable: boolean;
   first_seen: string;
   last_seen: string;
+  is_connected: boolean;
 }
 
 export interface FileLocation {

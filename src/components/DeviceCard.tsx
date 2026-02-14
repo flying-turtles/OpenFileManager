@@ -25,15 +25,18 @@ export function DeviceCard({ device, onSetType, onScan }: Props) {
   };
 
   return (
-    <div className="device-card">
+    <div className={`device-card ${!device.is_connected ? "disconnected" : ""}`}>
       <div className="device-header">
         <h3>{device.label}</h3>
-        <span
-          className="device-type-badge"
-          style={{ backgroundColor: typeColors[device.device_type] || "#95a5a6" }}
-        >
-          {device.device_type}
-        </span>
+        <div className="device-badges">
+          {!device.is_connected && <span className="badge badge-disconnected">Disconnected</span>}
+          <span
+            className="device-type-badge"
+            style={{ backgroundColor: typeColors[device.device_type] || "#95a5a6" }}
+          >
+            {device.device_type}
+          </span>
+        </div>
       </div>
       <div className="device-mount">{device.mount_point}</div>
       <div className="capacity-bar">
@@ -52,7 +55,9 @@ export function DeviceCard({ device, onSetType, onScan }: Props) {
           <option value="hot">Hot</option>
           <option value="cold">Cold</option>
         </select>
-        <button onClick={() => onScan(device)}>Scan</button>
+        <button onClick={() => onScan(device)} disabled={!device.is_connected}>
+          Scan
+        </button>
       </div>
     </div>
   );

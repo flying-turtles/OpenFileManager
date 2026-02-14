@@ -1,3 +1,4 @@
+use std::collections::HashSet;
 use std::path::PathBuf;
 use std::sync::Arc;
 
@@ -16,18 +17,30 @@ pub struct AppState {
     pub cancel_token: Arc<Mutex<Option<CancellationToken>>>,
 }
 
+fn mark_connected(mut devices: Vec<StorageDevice>, connected_ids: &HashSet<String>) -> Vec<StorageDevice> {
+    for dev in &mut devices {
+        dev.is_connected = connected_ids.contains(&dev.id);
+    }
+    devices
+}
+
 #[tauri::command]
 pub async fn detect_devices(state: State<'_, AppState>) -> Result<Vec<StorageDevice>, AppError> {
     let disks = devices::detect_volumes();
+    let connected_ids: HashSet<String> = disks.iter().map(|d| d.id.clone()).collect();
     for disk in &disks {
         db::upsert_device(&state.pool, disk).await?;
     }
-    db::get_all_devices(&state.pool).await
+    let all = db::get_all_devices(&state.pool).await?;
+    Ok(mark_connected(all, &connected_ids))
 }
 
 #[tauri::command]
 pub async fn get_devices(state: State<'_, AppState>) -> Result<Vec<StorageDevice>, AppError> {
-    db::get_all_devices(&state.pool).await
+    let disks = devices::detect_volumes();
+    let connected_ids: HashSet<String> = disks.iter().map(|d| d.id.clone()).collect();
+    let all = db::get_all_devices(&state.pool).await?;
+    Ok(mark_connected(all, &connected_ids))
 }
 
 #[tauri::command]
