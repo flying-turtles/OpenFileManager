@@ -15,6 +15,7 @@ export function NetworkDriveCard({ drive, onMount, onUnmount, onRemove }: Props)
   const typeColors: Record<string, string> = {
     hot: "#e74c3c",
     cold: "#3498db",
+    production: "#f39c12",
     unknown: "#95a5a6",
   };
 

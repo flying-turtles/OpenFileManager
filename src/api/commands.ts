@@ -31,6 +31,10 @@ export async function setDeviceType(
   });
 }
 
+export async function removeDevice(deviceId: string): Promise<void> {
+  return invoke("remove_device", { deviceId });
+}
+
 export async function startScan(
   target: string,
   mode: string,

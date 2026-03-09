@@ -56,6 +56,7 @@ pub fn run() {
             commands::detect_devices,
             commands::get_devices,
             commands::set_device_type,
+            commands::remove_device,
             commands::start_scan,
             commands::cancel_scan,
             commands::get_files_on_device,

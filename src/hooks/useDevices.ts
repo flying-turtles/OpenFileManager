@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback } from "react";
 import { listen } from "@tauri-apps/api/event";
 import type { StorageDevice } from "../types";
-import { detectDevices, getDevices, setDeviceType as apiSetDeviceType } from "../api/commands";
+import { detectDevices, getDevices, setDeviceType as apiSetDeviceType, removeDevice as apiRemoveDevice } from "../api/commands";
 
 export function useDevices() {
   const [devices, setDevices] = useState<StorageDevice[]>([]);
@@ -32,6 +32,11 @@ export function useDevices() {
     []
   );
 
+  const remove = useCallback(async (deviceId: string) => {
+    await apiRemoveDevice(deviceId);
+    setDevices((prev) => prev.filter((d) => d.id !== deviceId));
+  }, []);
+
   useEffect(() => {
     refresh();
     const unlisten = listen("devices-changed", () => refresh());
@@ -40,5 +45,5 @@ export function useDevices() {
     };
   }, [refresh]);
 
-  return { devices, loading, refresh, setType };
+  return { devices, loading, refresh, setType, remove };
 }

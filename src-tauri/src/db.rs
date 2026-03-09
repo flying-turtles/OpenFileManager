@@ -78,6 +78,19 @@ pub async fn set_device_type(pool: &DbPool, device_id: &str, device_type: &str) 
     Ok(())
 }
 
+pub async fn delete_device(pool: &DbPool, device_id: &str) -> Result<(), AppError> {
+    sqlx::query("DELETE FROM file_locations WHERE device_id = ?")
+        .bind(device_id)
+        .execute(pool)
+        .await?;
+    sqlx::query("DELETE FROM storage_devices WHERE id = ?")
+        .bind(device_id)
+        .execute(pool)
+        .await?;
+    cleanup_orphaned_files(pool).await?;
+    Ok(())
+}
+
 // --- File queries ---
 
 pub async fn upsert_file(pool: &DbPool, hash: &str, size: i64, name: &str, ext: &str) -> Result<(), AppError> {

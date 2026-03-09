@@ -82,6 +82,7 @@ export function AddNetworkDriveModal({ onAdd, onClose }: Props) {
             <option value="unknown">Unknown</option>
             <option value="hot">Hot</option>
             <option value="cold">Cold</option>
+            <option value="production">Production</option>
           </select>
         </div>
         <div className="form-actions">

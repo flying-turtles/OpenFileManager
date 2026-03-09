@@ -56,6 +56,14 @@ pub async fn set_device_type(
 }
 
 #[tauri::command]
+pub async fn remove_device(
+    state: State<'_, AppState>,
+    device_id: String,
+) -> Result<(), AppError> {
+    db::delete_device(&state.pool, &device_id).await
+}
+
+#[tauri::command]
 pub async fn start_scan(
     state: State<'_, AppState>,
     target: String,

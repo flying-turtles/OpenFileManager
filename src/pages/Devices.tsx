@@ -10,10 +10,24 @@ interface Props {
   onScanDevice: (device: StorageDevice) => void;
 }
 
+const SECTIONS = [
+  { key: "hot", label: "Hot Storage" },
+  { key: "cold", label: "Cold Storage" },
+  { key: "production", label: "Production" },
+  { key: "unknown", label: "Uncategorized" },
+] as const;
+
 export function Devices({ onScanDevice }: Props) {
-  const { devices, loading, refresh, setType } = useDevices();
+  const { devices, loading, refresh, setType, remove } = useDevices();
   const network = useNetworkDrives();
   const [showAddModal, setShowAddModal] = useState(false);
+
+  const grouped = new Map<string, StorageDevice[]>();
+  for (const section of SECTIONS) grouped.set(section.key, []);
+  for (const d of devices) {
+    const key = grouped.has(d.device_type) ? d.device_type : "unknown";
+    grouped.get(key)!.push(d);
+  }
 
   return (
     <div className="page">
@@ -44,12 +58,21 @@ export function Devices({ onScanDevice }: Props) {
         </>
       )}
 
-      <h2 style={{ fontSize: 16, marginBottom: 12, color: "var(--text-muted)" }}>Local Devices</h2>
-      <div className="device-grid">
-        {devices.map((d) => (
-          <DeviceCard key={d.id} device={d} onSetType={setType} onScan={onScanDevice} />
-        ))}
-      </div>
+      {SECTIONS.map(({ key, label }) => {
+        const sectionDevices = grouped.get(key)!;
+        if (sectionDevices.length === 0) return null;
+        return (
+          <div key={key} style={{ marginBottom: 24 }}>
+            <h2 style={{ fontSize: 16, marginBottom: 12, color: "var(--text-muted)" }}>{label}</h2>
+            <div className="device-grid">
+              {sectionDevices.map((d) => (
+                <DeviceCard key={d.id} device={d} onSetType={setType} onScan={onScanDevice} onRemove={remove} />
+              ))}
+            </div>
+          </div>
+        );
+      })}
+
       {!loading && devices.length === 0 && (
         <p className="empty">No devices detected</p>
       )}
