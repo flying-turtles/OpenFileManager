@@ -92,6 +92,19 @@ export interface ProjectDetail {
   files: FileSafety[];
 }
 
+export interface NetworkDrive {
+  id: string;
+  label: string;
+  protocol: string;
+  host: string;
+  share_path: string;
+  username: string;
+  mount_point: string;
+  device_type: string;
+  created_at: string;
+  is_mounted: boolean;
+}
+
 export interface ImportFile {
   source_path: string;
   relative_path: string;

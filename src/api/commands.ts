@@ -10,6 +10,7 @@ import type {
   ImportEvent,
   Project,
   ProjectDetail,
+  NetworkDrive,
 } from "../types";
 
 export async function detectDevices(): Promise<StorageDevice[]> {
@@ -135,4 +136,32 @@ export async function updateProject(
 
 export async function deleteProject(id: number): Promise<void> {
   return invoke("delete_project", { id });
+}
+
+export async function addNetworkDrive(
+  protocol: string,
+  host: string,
+  sharePath: string,
+  username: string,
+  password: string,
+  label: string,
+  deviceType: string
+): Promise<NetworkDrive> {
+  return invoke("add_network_drive", { protocol, host, sharePath, username, password, label, deviceType });
+}
+
+export async function getNetworkDrives(): Promise<NetworkDrive[]> {
+  return invoke("get_network_drives");
+}
+
+export async function mountNetworkDrive(driveId: string): Promise<void> {
+  return invoke("mount_network_drive", { driveId });
+}
+
+export async function unmountNetworkDrive(driveId: string): Promise<void> {
+  return invoke("unmount_network_drive", { driveId });
+}
+
+export async function removeNetworkDrive(driveId: string): Promise<void> {
+  return invoke("remove_network_drive", { driveId });
 }

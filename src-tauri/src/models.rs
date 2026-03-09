@@ -151,6 +151,21 @@ pub struct ProjectDetail {
     pub files: Vec<FileSafety>,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
+pub struct NetworkDrive {
+    pub id: String,
+    pub label: String,
+    pub protocol: String,
+    pub host: String,
+    pub share_path: String,
+    pub username: String,
+    pub mount_point: String,
+    pub device_type: String,
+    pub created_at: String,
+    #[sqlx(default)]
+    pub is_mounted: bool,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum ImportEvent {
     AnalysisStarted { total_files: u64 },

@@ -739,3 +739,38 @@ button:disabled {
   justify-content: flex-end;
   margin-top: 16px;
 }
+
+/* Modal */
+.modal-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.6);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+}
+
+.modal-content {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 24px;
+  width: 480px;
+  max-height: 90vh;
+  overflow-y: auto;
+}
+
+.modal-content h2 {
+  margin-bottom: 16px;
+  font-size: 18px;
+}
+
+.modal-content select {
+  width: 100%;
+}
+
+.badge-network {
+  background: rgba(74, 158, 255, 0.2);
+  color: var(--accent);
+}

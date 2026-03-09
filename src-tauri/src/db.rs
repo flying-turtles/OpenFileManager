@@ -33,6 +33,8 @@ pub async fn run_migrations(pool: &DbPool) -> Result<(), AppError> {
     sqlx::raw_sql(sql).execute(pool).await?;
     let sql2 = include_str!("../migrations/002_projects.sql");
     sqlx::raw_sql(sql2).execute(pool).await?;
+    let sql3 = include_str!("../migrations/003_network_drives.sql");
+    sqlx::raw_sql(sql3).execute(pool).await?;
     Ok(())
 }
 
@@ -520,6 +522,62 @@ pub async fn get_project_stats(
         backed_up_pct,
         extensions,
     })
+}
+
+// --- Network drive queries ---
+
+pub async fn insert_network_drive(pool: &DbPool, drive: &NetworkDrive) -> Result<(), AppError> {
+    sqlx::query(
+        "INSERT INTO network_drives (id, label, protocol, host, share_path, username, mount_point, device_type)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?)"
+    )
+    .bind(&drive.id)
+    .bind(&drive.label)
+    .bind(&drive.protocol)
+    .bind(&drive.host)
+    .bind(&drive.share_path)
+    .bind(&drive.username)
+    .bind(&drive.mount_point)
+    .bind(&drive.device_type)
+    .execute(pool)
+    .await?;
+    Ok(())
+}
+
+pub async fn get_all_network_drives(pool: &DbPool) -> Result<Vec<NetworkDrive>, AppError> {
+    let drives = sqlx::query_as::<_, NetworkDrive>(
+        "SELECT * FROM network_drives ORDER BY created_at DESC"
+    )
+    .fetch_all(pool)
+    .await?;
+    Ok(drives)
+}
+
+pub async fn delete_network_drive(pool: &DbPool, id: &str) -> Result<(), AppError> {
+    sqlx::query("DELETE FROM network_drives WHERE id = ?")
+        .bind(id)
+        .execute(pool)
+        .await?;
+    Ok(())
+}
+
+pub async fn update_network_drive_type(pool: &DbPool, id: &str, device_type: &str) -> Result<(), AppError> {
+    sqlx::query("UPDATE network_drives SET device_type = ? WHERE id = ?")
+        .bind(device_type)
+        .bind(id)
+        .execute(pool)
+        .await?;
+    Ok(())
+}
+
+pub async fn get_network_drive(pool: &DbPool, id: &str) -> Result<NetworkDrive, AppError> {
+    let drive = sqlx::query_as::<_, NetworkDrive>(
+        "SELECT * FROM network_drives WHERE id = ?"
+    )
+    .bind(id)
+    .fetch_one(pool)
+    .await?;
+    Ok(drive)
 }
 
 pub async fn get_dashboard_stats(pool: &DbPool) -> Result<DashboardStats, AppError> {
