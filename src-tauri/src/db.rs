@@ -1,7 +1,9 @@
-use sqlx::sqlite::{SqliteConnectOptions, SqlitePoolOptions};
-use sqlx::{Pool, Sqlite};
+use std::collections::HashMap;
 use std::path::Path;
 use std::str::FromStr;
+
+use sqlx::sqlite::{SqliteConnectOptions, SqlitePoolOptions};
+use sqlx::{Pool, Sqlite};
 
 use crate::error::AppError;
 use crate::models::*;
@@ -29,6 +31,8 @@ pub async fn init_pool(db_path: &Path) -> Result<DbPool, AppError> {
 pub async fn run_migrations(pool: &DbPool) -> Result<(), AppError> {
     let sql = include_str!("../migrations/001_initial.sql");
     sqlx::raw_sql(sql).execute(pool).await?;
+    let sql2 = include_str!("../migrations/002_projects.sql");
+    sqlx::raw_sql(sql2).execute(pool).await?;
     Ok(())
 }
 
@@ -307,6 +311,215 @@ pub async fn cleanup_orphaned_files(pool: &DbPool) -> Result<u64, AppError> {
     .execute(pool)
     .await?;
     Ok(res.rows_affected())
+}
+
+pub async fn get_locations_for_hashes(
+    pool: &DbPool,
+    hashes: &[String],
+) -> Result<HashMap<String, Vec<FileLocation>>, AppError> {
+    let mut result: HashMap<String, Vec<FileLocation>> = HashMap::new();
+    for chunk in hashes.chunks(500) {
+        let placeholders: String = chunk.iter().map(|_| "?").collect::<Vec<_>>().join(",");
+        let sql = format!(
+            "SELECT * FROM file_locations WHERE blake3_hash IN ({})",
+            placeholders
+        );
+        let mut query = sqlx::query_as::<_, FileLocation>(&sql);
+        for hash in chunk {
+            query = query.bind(hash);
+        }
+        let locs = query.fetch_all(pool).await?;
+        for loc in locs {
+            result.entry(loc.blake3_hash.clone()).or_default().push(loc);
+        }
+    }
+    Ok(result)
+}
+
+// --- Project queries ---
+
+pub async fn create_project(
+    pool: &DbPool,
+    title: &str,
+    description: &str,
+    start_date: &str,
+    end_date: &str,
+) -> Result<Project, AppError> {
+    let id = sqlx::query_scalar::<_, i64>(
+        "INSERT INTO projects (title, description, start_date, end_date) VALUES (?, ?, ?, ?) RETURNING id"
+    )
+    .bind(title)
+    .bind(description)
+    .bind(start_date)
+    .bind(end_date)
+    .fetch_one(pool)
+    .await?;
+
+    let project = sqlx::query_as::<_, Project>("SELECT * FROM projects WHERE id = ?")
+        .bind(id)
+        .fetch_one(pool)
+        .await?;
+    Ok(project)
+}
+
+pub async fn get_all_projects(pool: &DbPool) -> Result<Vec<Project>, AppError> {
+    let projects = sqlx::query_as::<_, Project>("SELECT * FROM projects ORDER BY start_date DESC")
+        .fetch_all(pool)
+        .await?;
+    Ok(projects)
+}
+
+pub async fn get_project(pool: &DbPool, id: i64) -> Result<Project, AppError> {
+    let project = sqlx::query_as::<_, Project>("SELECT * FROM projects WHERE id = ?")
+        .bind(id)
+        .fetch_one(pool)
+        .await?;
+    Ok(project)
+}
+
+pub async fn update_project(
+    pool: &DbPool,
+    id: i64,
+    title: &str,
+    description: &str,
+    start_date: &str,
+    end_date: &str,
+) -> Result<Project, AppError> {
+    sqlx::query("UPDATE projects SET title = ?, description = ?, start_date = ?, end_date = ? WHERE id = ?")
+        .bind(title)
+        .bind(description)
+        .bind(start_date)
+        .bind(end_date)
+        .bind(id)
+        .execute(pool)
+        .await?;
+    get_project(pool, id).await
+}
+
+pub async fn delete_project(pool: &DbPool, id: i64) -> Result<(), AppError> {
+    sqlx::query("DELETE FROM projects WHERE id = ?")
+        .bind(id)
+        .execute(pool)
+        .await?;
+    Ok(())
+}
+
+pub async fn get_project_files(
+    pool: &DbPool,
+    start_date: &str,
+    end_date: &str,
+) -> Result<Vec<FileSafety>, AppError> {
+    // Find files whose MIN(modified_at) falls in [start_date, end_date + 1 day)
+    let rows = sqlx::query_as::<_, (String, i64, String, i64, i64, i64)>(
+        "SELECT f.blake3_hash, f.file_size, f.representative_name,
+                COUNT(fl.id) as total_copies,
+                COALESCE(SUM(CASE WHEN d.device_type = 'hot' THEN 1 ELSE 0 END), 0) as hot_copies,
+                COALESCE(SUM(CASE WHEN d.device_type = 'cold' THEN 1 ELSE 0 END), 0) as cold_copies
+         FROM files f
+         JOIN file_locations fl ON f.blake3_hash = fl.blake3_hash
+         JOIN storage_devices d ON fl.device_id = d.id
+         WHERE f.blake3_hash IN (
+             SELECT fl2.blake3_hash
+             FROM file_locations fl2
+             GROUP BY fl2.blake3_hash
+             HAVING MIN(fl2.modified_at) >= ? AND MIN(fl2.modified_at) < date(?, '+1 day')
+         )
+         GROUP BY f.blake3_hash
+         ORDER BY f.file_size DESC"
+    )
+    .bind(start_date)
+    .bind(end_date)
+    .fetch_all(pool)
+    .await?;
+
+    let mut results = Vec::new();
+    for (blake3_hash, file_size, representative_name, total_copies, hot_copies, cold_copies) in rows {
+        let locations = get_file_locations(pool, &blake3_hash).await?;
+        let is_safe = cold_copies >= 1 && total_copies >= 2;
+        results.push(FileSafety {
+            blake3_hash,
+            file_size,
+            representative_name,
+            total_copies,
+            hot_copies,
+            cold_copies,
+            is_safe,
+            locations,
+        });
+    }
+    Ok(results)
+}
+
+pub async fn get_project_stats(
+    pool: &DbPool,
+    start_date: &str,
+    end_date: &str,
+) -> Result<ProjectStats, AppError> {
+    let base_cte = "WITH project_files AS (
+        SELECT fl2.blake3_hash
+        FROM file_locations fl2
+        GROUP BY fl2.blake3_hash
+        HAVING MIN(fl2.modified_at) >= ? AND MIN(fl2.modified_at) < date(?, '+1 day')
+    )";
+
+    let counts: (i64, i64) = sqlx::query_as(&format!(
+        "{} SELECT COUNT(*), COALESCE(SUM(f.file_size), 0)
+         FROM files f
+         WHERE f.blake3_hash IN (SELECT blake3_hash FROM project_files)",
+        base_cte
+    ))
+    .bind(start_date)
+    .bind(end_date)
+    .fetch_one(pool)
+    .await?;
+
+    let backed_up: (i64,) = sqlx::query_as(&format!(
+        "{} SELECT COUNT(*) FROM (
+            SELECT f.blake3_hash
+            FROM files f
+            JOIN file_locations fl ON f.blake3_hash = fl.blake3_hash
+            JOIN storage_devices d ON fl.device_id = d.id
+            WHERE f.blake3_hash IN (SELECT blake3_hash FROM project_files)
+            GROUP BY f.blake3_hash
+            HAVING COUNT(fl.id) >= 2 AND SUM(CASE WHEN d.device_type = 'cold' THEN 1 ELSE 0 END) >= 1
+        )",
+        base_cte
+    ))
+    .bind(start_date)
+    .bind(end_date)
+    .fetch_one(pool)
+    .await?;
+
+    let ext_rows = sqlx::query_as::<_, (String, i64)>(&format!(
+        "{} SELECT COALESCE(f.extension, ''), COUNT(*) as cnt
+         FROM files f
+         WHERE f.blake3_hash IN (SELECT blake3_hash FROM project_files)
+         GROUP BY f.extension
+         ORDER BY cnt DESC",
+        base_cte
+    ))
+    .bind(start_date)
+    .bind(end_date)
+    .fetch_all(pool)
+    .await?;
+
+    let extensions = ext_rows
+        .into_iter()
+        .map(|(extension, count)| ExtensionCount { extension, count })
+        .collect();
+
+    let backed_up_pct = if counts.0 > 0 {
+        (backed_up.0 as f64 / counts.0 as f64) * 100.0
+    } else {
+        0.0
+    };
+
+    Ok(ProjectStats {
+        total_files: counts.0,
+        total_size_bytes: counts.1,
+        backed_up_pct,
+        extensions,
+    })
 }
 
 pub async fn get_dashboard_stats(pool: &DbPool) -> Result<DashboardStats, AppError> {

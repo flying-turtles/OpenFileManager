@@ -15,6 +15,8 @@ use crate::models::*;
 pub struct AppState {
     pub pool: DbPool,
     pub cancel_token: Arc<Mutex<Option<CancellationToken>>>,
+    pub import_cancel_token: Arc<Mutex<Option<CancellationToken>>>,
+    pub import_analysis: Arc<Mutex<Option<Arc<ImportAnalysis>>>>,
 }
 
 fn mark_connected(mut devices: Vec<StorageDevice>, connected_ids: &HashSet<String>) -> Vec<StorageDevice> {
@@ -162,4 +164,145 @@ pub async fn get_file_locations(
 #[tauri::command]
 pub async fn get_dashboard_stats(state: State<'_, AppState>) -> Result<DashboardStats, AppError> {
     db::get_dashboard_stats(&state.pool).await
+}
+
+#[tauri::command]
+pub async fn analyze_sd_card(
+    state: State<'_, AppState>,
+    sd_mount: String,
+    on_event: Channel<ImportEvent>,
+) -> Result<(), AppError> {
+    let pool = state.pool.clone();
+    let import_analysis = state.import_analysis.clone();
+    let cancel_token = CancellationToken::new();
+
+    {
+        let mut guard = state.import_cancel_token.lock().await;
+        *guard = Some(cancel_token.clone());
+    }
+
+    tokio::spawn(async move {
+        match crate::importer::analyze_sd_card(pool, PathBuf::from(sd_mount), on_event.clone(), cancel_token).await {
+            Ok(analysis) => {
+                let analysis_arc = Arc::new(analysis.clone());
+                *import_analysis.lock().await = Some(analysis_arc);
+                let _ = on_event.send(ImportEvent::AnalysisComplete(analysis));
+            }
+            Err(e) => {
+                if e.to_string() != "Cancelled" {
+                    let _ = on_event.send(ImportEvent::Error { message: e.to_string() });
+                }
+            }
+        }
+    });
+
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn start_import(
+    state: State<'_, AppState>,
+    target_device_ids: Vec<String>,
+    on_event: Channel<ImportEvent>,
+) -> Result<(), AppError> {
+    let analysis = {
+        let guard = state.import_analysis.lock().await;
+        guard
+            .clone()
+            .ok_or_else(|| AppError::General("No analysis available. Run analyze first.".into()))?
+    };
+
+    let pool = state.pool.clone();
+    let cancel_token = CancellationToken::new();
+
+    {
+        let mut guard = state.import_cancel_token.lock().await;
+        *guard = Some(cancel_token.clone());
+    }
+
+    let volumes = crate::devices::detect_volumes();
+    let mut targets = Vec::new();
+    for id in target_device_ids {
+        let vol = volumes
+            .iter()
+            .find(|v| v.id == id)
+            .ok_or_else(|| AppError::General(format!("Device {} not connected", id)))?;
+        targets.push((vol.id.clone(), vol.mount_point.clone(), vol.label.clone()));
+    }
+
+    tokio::spawn(async move {
+        if let Err(e) = crate::importer::run_import(pool, analysis, targets, on_event.clone(), cancel_token).await {
+            let _ = on_event.send(ImportEvent::Error {
+                message: e.to_string(),
+            });
+        }
+    });
+
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn cancel_import(state: State<'_, AppState>) -> Result<(), AppError> {
+    let guard = state.import_cancel_token.lock().await;
+    if let Some(token) = guard.as_ref() {
+        token.cancel();
+    }
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn create_project(
+    state: State<'_, AppState>,
+    title: String,
+    description: String,
+    start_date: String,
+    end_date: String,
+) -> Result<Project, AppError> {
+    db::create_project(&state.pool, &title, &description, &start_date, &end_date).await
+}
+
+#[tauri::command]
+pub async fn get_projects(state: State<'_, AppState>) -> Result<Vec<Project>, AppError> {
+    db::get_all_projects(&state.pool).await
+}
+
+#[tauri::command]
+pub async fn get_project_detail(
+    state: State<'_, AppState>,
+    id: i64,
+) -> Result<ProjectDetail, AppError> {
+    let project = db::get_project(&state.pool, id).await?;
+    let stats = db::get_project_stats(&state.pool, &project.start_date, &project.end_date).await?;
+    let files = db::get_project_files(&state.pool, &project.start_date, &project.end_date).await?;
+    Ok(ProjectDetail { project, stats, files })
+}
+
+#[tauri::command]
+pub async fn update_project(
+    state: State<'_, AppState>,
+    id: i64,
+    title: String,
+    description: String,
+    start_date: String,
+    end_date: String,
+) -> Result<Project, AppError> {
+    db::update_project(&state.pool, id, &title, &description, &start_date, &end_date).await
+}
+
+#[tauri::command]
+pub async fn delete_project(state: State<'_, AppState>, id: i64) -> Result<(), AppError> {
+    db::delete_project(&state.pool, id).await
+}
+
+#[tauri::command]
+pub async fn eject_device(mount_point: String) -> Result<(), AppError> {
+    let output = std::process::Command::new("diskutil")
+        .args(["eject", &mount_point])
+        .output()?;
+    if !output.status.success() {
+        return Err(AppError::General(
+            String::from_utf8_lossy(&output.stderr).to_string(),
+        ));
+    }
+    Ok(())
 }

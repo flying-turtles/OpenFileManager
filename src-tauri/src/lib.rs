@@ -3,6 +3,7 @@ mod db;
 mod devices;
 mod error;
 mod hasher;
+mod importer;
 mod models;
 mod scanner;
 
@@ -34,6 +35,8 @@ pub fn run() {
             app.manage(AppState {
                 pool,
                 cancel_token: Arc::new(Mutex::new(None)),
+                import_cancel_token: Arc::new(Mutex::new(None)),
+                import_analysis: Arc::new(Mutex::new(None)),
             });
 
             Ok(())
@@ -51,6 +54,15 @@ pub fn run() {
             commands::browse_directory,
             commands::get_file_locations,
             commands::get_dashboard_stats,
+            commands::analyze_sd_card,
+            commands::start_import,
+            commands::cancel_import,
+            commands::eject_device,
+            commands::create_project,
+            commands::get_projects,
+            commands::get_project_detail,
+            commands::update_project,
+            commands::delete_project,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

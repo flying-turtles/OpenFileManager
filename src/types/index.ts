@@ -64,3 +64,70 @@ export type ScanEvent =
   | { Finished: { scanned: number; hashed: number; added: number; removed: number } }
   | { Error: { message: string } }
   | "Cancelled";
+
+export interface Project {
+  id: number;
+  title: string;
+  description: string;
+  start_date: string;
+  end_date: string;
+  created_at: string;
+}
+
+export interface ExtensionCount {
+  extension: string;
+  count: number;
+}
+
+export interface ProjectStats {
+  total_files: number;
+  total_size_bytes: number;
+  backed_up_pct: number;
+  extensions: ExtensionCount[];
+}
+
+export interface ProjectDetail {
+  project: Project;
+  stats: ProjectStats;
+  files: FileSafety[];
+}
+
+export interface ImportFile {
+  source_path: string;
+  relative_path: string;
+  file_name: string;
+  blake3_hash: string;
+  file_size: number;
+  created_date: string;
+  modified_at: string | null;
+  existing_locations: FileLocation[];
+}
+
+export interface ImportAnalysis {
+  sd_device_id: string;
+  sd_label: string;
+  files: ImportFile[];
+  total_bytes: number;
+  new_file_count: number;
+  existing_file_count: number;
+}
+
+export interface DeviceCopyProgress {
+  device_id: string;
+  device_label: string;
+  bytes_copied: number;
+  total_bytes: number;
+  files_copied: number;
+  total_files: number;
+  current_file: string;
+}
+
+export type ImportEvent =
+  | { AnalysisStarted: { total_files: number } }
+  | { AnalysisProgress: { processed: number; total: number } }
+  | { AnalysisComplete: ImportAnalysis }
+  | { CopyStarted: { total_files: number; device_count: number } }
+  | { CopyProgress: DeviceCopyProgress }
+  | "CopyComplete"
+  | { Error: { message: string } }
+  | "Cancelled";

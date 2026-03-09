@@ -7,6 +7,9 @@ import type {
   DashboardStats,
   DirEntry,
   ScanEvent,
+  ImportEvent,
+  Project,
+  ProjectDetail,
 } from "../types";
 
 export async function detectDevices(): Promise<StorageDevice[]> {
@@ -75,4 +78,61 @@ export async function getFileLocations(
 
 export async function getDashboardStats(): Promise<DashboardStats> {
   return invoke("get_dashboard_stats");
+}
+
+export async function analyzeSdCard(
+  sdMount: string,
+  onEvent: (event: ImportEvent) => void
+): Promise<void> {
+  const channel = new Channel<ImportEvent>();
+  channel.onmessage = onEvent;
+  return invoke("analyze_sd_card", { sdMount, onEvent: channel });
+}
+
+export async function startImport(
+  targetDeviceIds: string[],
+  onEvent: (event: ImportEvent) => void
+): Promise<void> {
+  const channel = new Channel<ImportEvent>();
+  channel.onmessage = onEvent;
+  return invoke("start_import", { targetDeviceIds, onEvent: channel });
+}
+
+export async function cancelImport(): Promise<void> {
+  return invoke("cancel_import");
+}
+
+export async function ejectDevice(mountPoint: string): Promise<void> {
+  return invoke("eject_device", { mountPoint });
+}
+
+export async function createProject(
+  title: string,
+  description: string,
+  startDate: string,
+  endDate: string
+): Promise<Project> {
+  return invoke("create_project", { title, description, startDate, endDate });
+}
+
+export async function getProjects(): Promise<Project[]> {
+  return invoke("get_projects");
+}
+
+export async function getProjectDetail(id: number): Promise<ProjectDetail> {
+  return invoke("get_project_detail", { id });
+}
+
+export async function updateProject(
+  id: number,
+  title: string,
+  description: string,
+  startDate: string,
+  endDate: string
+): Promise<Project> {
+  return invoke("update_project", { id, title, description, startDate, endDate });
+}
+
+export async function deleteProject(id: number): Promise<void> {
+  return invoke("delete_project", { id });
 }
