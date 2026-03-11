@@ -43,10 +43,26 @@ export function Scanner({ initialDevice }: Props) {
     setPendingScans((prev) => prev.filter((s) => s.id !== ps.id));
   };
 
-  const handleBrowse = async () => {
+  const handleBrowseFolder = async () => {
     const selected = await open({ directory: true, multiple: false });
     if (selected) {
       setTarget(selected);
+    }
+  };
+
+  const handleBrowseFiles = async () => {
+    const selected = await open({ directory: false, multiple: true });
+    if (selected) {
+      // For multiple files, use the parent directory; for single file, use the file path
+      const paths = Array.isArray(selected) ? selected : [selected];
+      if (paths.length === 1) {
+        setTarget(paths[0]);
+      } else if (paths.length > 1) {
+        // Use common parent directory
+        const parts = paths[0].split("/");
+        parts.pop();
+        setTarget(parts.join("/"));
+      }
     }
   };
 
@@ -116,8 +132,11 @@ export function Scanner({ initialDevice }: Props) {
               placeholder="Drop a folder here, browse, or type a path..."
               disabled={isBusy}
             />
-            <button onClick={handleBrowse} disabled={isBusy}>
-              Browse
+            <button onClick={handleBrowseFolder} disabled={isBusy}>
+              Folder
+            </button>
+            <button onClick={handleBrowseFiles} disabled={isBusy}>
+              File
             </button>
           </div>
           {dragOver && <div className="drop-hint">Drop to set path</div>}

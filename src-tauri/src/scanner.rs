@@ -286,11 +286,18 @@ pub async fn run_scan(
     }
 
     // === Phase 3: cleanup stale locations ===
-    let removed =
-        db::remove_stale_locations(&pool, &device_id, &scan_prefix, &seen_paths).await?;
-    if removed > 0 {
-        db::cleanup_orphaned_files(&pool).await?;
-    }
+    // Skip cleanup when scanning a single file (not a directory) — we can't
+    // determine what's "stale" from a single-file scan, and the prefix-LIKE
+    // could accidentally match unrelated entries.
+    let removed = if target.is_dir() {
+        let r = db::remove_stale_locations(&pool, &device_id, &scan_prefix, &seen_paths).await?;
+        if r > 0 {
+            db::cleanup_orphaned_files(&pool).await?;
+        }
+        r
+    } else {
+        0
+    };
 
     // Scan finished successfully — remove any pending record
     let _ = db::delete_pending_scan_by_target(&pool, "scan", &target_str).await;
