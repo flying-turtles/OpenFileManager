@@ -11,10 +11,15 @@ use crate::db::{self, DbPool};
 use crate::devices;
 use crate::error::AppError;
 use crate::models::*;
+use crate::network;
+use crate::scanner::ScanProgress;
 
 pub struct AppState {
     pub pool: DbPool,
     pub cancel_token: Arc<Mutex<Option<CancellationToken>>>,
+    pub scan_progress: Arc<Mutex<Option<Arc<ScanProgress>>>>,
+    pub scan_target: Arc<Mutex<Option<String>>>,
+    pub scan_mode: Arc<Mutex<Option<String>>>,
     pub import_cancel_token: Arc<Mutex<Option<CancellationToken>>>,
     pub import_analysis: Arc<Mutex<Option<Arc<ImportAnalysis>>>>,
 }
@@ -55,6 +60,14 @@ pub async fn set_device_type(
 }
 
 #[tauri::command]
+pub async fn remove_device(
+    state: State<'_, AppState>,
+    device_id: String,
+) -> Result<(), AppError> {
+    db::delete_device(&state.pool, &device_id).await
+}
+
+#[tauri::command]
 pub async fn start_scan(
     state: State<'_, AppState>,
     target: String,
@@ -63,15 +76,31 @@ pub async fn start_scan(
 ) -> Result<(), AppError> {
     let pool = state.pool.clone();
     let cancel_token = CancellationToken::new();
+    let progress = Arc::new(ScanProgress::new());
 
     {
         let mut guard = state.cancel_token.lock().await;
         *guard = Some(cancel_token.clone());
     }
+    {
+        let mut guard = state.scan_progress.lock().await;
+        *guard = Some(progress.clone());
+    }
+    {
+        let mut guard = state.scan_target.lock().await;
+        *guard = Some(target.clone());
+    }
+    {
+        let mut guard = state.scan_mode.lock().await;
+        *guard = Some(mode.clone());
+    }
+
+    // Remove any existing pending scan for this target
+    let _ = db::delete_pending_scan_by_target(&pool, "scan", &target).await;
 
     let target = PathBuf::from(target);
     tokio::spawn(async move {
-        if let Err(e) = crate::scanner::run_scan(pool, target, mode, on_event.clone(), cancel_token).await {
+        if let Err(e) = crate::scanner::run_scan(pool, target, mode, on_event.clone(), cancel_token, progress).await {
             let _ = on_event.send(ScanEvent::Error {
                 message: e.to_string(),
             });
@@ -88,6 +117,56 @@ pub async fn cancel_scan(state: State<'_, AppState>) -> Result<(), AppError> {
         token.cancel();
     }
     Ok(())
+}
+
+#[tauri::command]
+pub async fn pause_scan(state: State<'_, AppState>) -> Result<(), AppError> {
+    // Set pausing flag then cancel
+    let progress_guard = state.scan_progress.lock().await;
+    if let Some(progress) = progress_guard.as_ref() {
+        progress.pausing.store(true, std::sync::atomic::Ordering::Relaxed);
+    }
+    let token_guard = state.cancel_token.lock().await;
+    if let Some(token) = token_guard.as_ref() {
+        token.cancel();
+    }
+    drop(token_guard);
+    drop(progress_guard);
+
+    // Persist the pending scan
+    let target = state.scan_target.lock().await.clone().unwrap_or_default();
+    let mode = state.scan_mode.lock().await.clone().unwrap_or_default();
+    if !target.is_empty() {
+        let progress_guard = state.scan_progress.lock().await;
+        if let Some(p) = progress_guard.as_ref() {
+            let volumes = devices::detect_volumes();
+            let device_id = devices::device_for_path(&volumes, &target)
+                .map(|(id, _)| id)
+                .unwrap_or_default();
+            db::upsert_pending_scan(
+                &state.pool,
+                "scan",
+                &target,
+                &device_id,
+                &mode,
+                p.total.load(std::sync::atomic::Ordering::Relaxed) as i64,
+                p.scanned.load(std::sync::atomic::Ordering::Relaxed) as i64,
+                p.hashed.load(std::sync::atomic::Ordering::Relaxed) as i64,
+                p.added.load(std::sync::atomic::Ordering::Relaxed) as i64,
+            ).await?;
+        }
+    }
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn get_pending_scans(state: State<'_, AppState>) -> Result<Vec<PendingScan>, AppError> {
+    db::get_pending_scans(&state.pool).await
+}
+
+#[tauri::command]
+pub async fn dismiss_pending_scan(state: State<'_, AppState>, id: i64) -> Result<(), AppError> {
+    db::delete_pending_scan(&state.pool, id).await
 }
 
 #[tauri::command]
@@ -292,6 +371,114 @@ pub async fn update_project(
 #[tauri::command]
 pub async fn delete_project(state: State<'_, AppState>, id: i64) -> Result<(), AppError> {
     db::delete_project(&state.pool, id).await
+}
+
+// --- Network drive commands ---
+
+#[tauri::command]
+pub async fn add_network_drive(
+    state: State<'_, AppState>,
+    protocol: String,
+    host: String,
+    share_path: String,
+    username: String,
+    password: String,
+    label: String,
+    device_type: String,
+) -> Result<NetworkDrive, AppError> {
+    let id = network::generate_drive_id(&protocol, &host, &share_path);
+    let mount_point = format!("/Volumes/{}", label);
+
+    let drive = NetworkDrive {
+        id: id.clone(),
+        label,
+        protocol,
+        host,
+        share_path,
+        username: username.clone(),
+        mount_point,
+        device_type,
+        created_at: String::new(),
+        is_mounted: false,
+    };
+
+    db::insert_network_drive(&state.pool, &drive).await?;
+
+    if !password.is_empty() {
+        network::keychain_store(&id, &username, &password)?;
+    }
+
+    let mut saved = db::get_network_drive(&state.pool, &id).await?;
+    saved.is_mounted = network::is_mountpoint(&saved.mount_point);
+    Ok(saved)
+}
+
+#[tauri::command]
+pub async fn get_network_drives(state: State<'_, AppState>) -> Result<Vec<NetworkDrive>, AppError> {
+    let mut drives = db::get_all_network_drives(&state.pool).await?;
+    for drive in &mut drives {
+        drive.is_mounted = network::is_mountpoint(&drive.mount_point);
+    }
+    Ok(drives)
+}
+
+#[tauri::command]
+pub async fn mount_network_drive(state: State<'_, AppState>, drive_id: String) -> Result<(), AppError> {
+    let drive = db::get_network_drive(&state.pool, &drive_id).await?;
+
+    match drive.protocol.as_str() {
+        "smb" => {
+            let password = if !drive.username.is_empty() {
+                network::keychain_load(&drive_id, &drive.username).unwrap_or_default()
+            } else {
+                String::new()
+            };
+            network::mount_smb(&drive.host, &drive.share_path, &drive.username, &password, &drive.mount_point)?;
+        }
+        "nfs" => {
+            network::mount_nfs(&drive.host, &drive.share_path, &drive.mount_point)?;
+        }
+        _ => return Err(AppError::General(format!("Unsupported protocol: {}", drive.protocol))),
+    }
+
+    // Upsert into storage_devices so scanning/file tracking works
+    let disk = DetectedDisk {
+        id: drive.id.clone(),
+        label: drive.label.clone(),
+        mount_point: drive.mount_point.clone(),
+        total_bytes: 0,
+        available_bytes: 0,
+        is_removable: false,
+    };
+    db::upsert_device(&state.pool, &disk).await?;
+    db::set_device_type(&state.pool, &drive.id, &drive.device_type).await?;
+
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn unmount_network_drive(state: State<'_, AppState>, drive_id: String) -> Result<(), AppError> {
+    let drive = db::get_network_drive(&state.pool, &drive_id).await?;
+    network::unmount_drive(&drive.mount_point)?;
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn remove_network_drive(state: State<'_, AppState>, drive_id: String) -> Result<(), AppError> {
+    let drive = db::get_network_drive(&state.pool, &drive_id).await?;
+
+    // Unmount if mounted
+    if network::is_mountpoint(&drive.mount_point) {
+        let _ = network::unmount_drive(&drive.mount_point);
+    }
+
+    // Delete keychain entry
+    if !drive.username.is_empty() {
+        let _ = network::keychain_delete(&drive_id, &drive.username);
+    }
+
+    db::delete_network_drive(&state.pool, &drive_id).await?;
+    Ok(())
 }
 
 #[tauri::command]

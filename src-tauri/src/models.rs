@@ -85,6 +85,21 @@ pub enum ScanEvent {
     Finished { scanned: u64, hashed: u64, added: u64, removed: u64 },
     Error { message: String },
     Cancelled,
+    Paused { scanned: u64, hashed: u64, added: u64, total: u64 },
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
+pub struct PendingScan {
+    pub id: i64,
+    pub scan_type: String,
+    pub target: String,
+    pub device_id: String,
+    pub mode: String,
+    pub total_files: i64,
+    pub processed: i64,
+    pub hashed: i64,
+    pub added: i64,
+    pub paused_at: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -151,6 +166,27 @@ pub struct ProjectDetail {
     pub files: Vec<FileSafety>,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
+pub struct NetworkDrive {
+    pub id: String,
+    pub label: String,
+    pub protocol: String,
+    pub host: String,
+    pub share_path: String,
+    pub username: String,
+    pub mount_point: String,
+    pub device_type: String,
+    pub created_at: String,
+    #[sqlx(default)]
+    pub is_mounted: bool,
+}
+
+#[derive(Debug, Clone)]
+pub struct DirCacheEntry {
+    pub dir_mtime: String,
+    pub file_count: i64,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum ImportEvent {
     AnalysisStarted { total_files: u64 },
@@ -161,4 +197,5 @@ pub enum ImportEvent {
     CopyComplete,
     Error { message: String },
     Cancelled,
+    Paused { processed: u64, total: u64 },
 }

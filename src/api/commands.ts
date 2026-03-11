@@ -10,6 +10,8 @@ import type {
   ImportEvent,
   Project,
   ProjectDetail,
+  NetworkDrive,
+  PendingScan,
 } from "../types";
 
 export async function detectDevices(): Promise<StorageDevice[]> {
@@ -30,6 +32,10 @@ export async function setDeviceType(
   });
 }
 
+export async function removeDevice(deviceId: string): Promise<void> {
+  return invoke("remove_device", { deviceId });
+}
+
 export async function startScan(
   target: string,
   mode: string,
@@ -42,6 +48,18 @@ export async function startScan(
 
 export async function cancelScan(): Promise<void> {
   return invoke("cancel_scan");
+}
+
+export async function pauseScan(): Promise<void> {
+  return invoke("pause_scan");
+}
+
+export async function getPendingScans(): Promise<PendingScan[]> {
+  return invoke("get_pending_scans");
+}
+
+export async function dismissPendingScan(id: number): Promise<void> {
+  return invoke("dismiss_pending_scan", { id });
 }
 
 export async function getFilesOnDevice(
@@ -135,4 +153,32 @@ export async function updateProject(
 
 export async function deleteProject(id: number): Promise<void> {
   return invoke("delete_project", { id });
+}
+
+export async function addNetworkDrive(
+  protocol: string,
+  host: string,
+  sharePath: string,
+  username: string,
+  password: string,
+  label: string,
+  deviceType: string
+): Promise<NetworkDrive> {
+  return invoke("add_network_drive", { protocol, host, sharePath, username, password, label, deviceType });
+}
+
+export async function getNetworkDrives(): Promise<NetworkDrive[]> {
+  return invoke("get_network_drives");
+}
+
+export async function mountNetworkDrive(driveId: string): Promise<void> {
+  return invoke("mount_network_drive", { driveId });
+}
+
+export async function unmountNetworkDrive(driveId: string): Promise<void> {
+  return invoke("unmount_network_drive", { driveId });
+}
+
+export async function removeNetworkDrive(driveId: string): Promise<void> {
+  return invoke("remove_network_drive", { driveId });
 }

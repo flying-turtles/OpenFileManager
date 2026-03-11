@@ -1,4 +1,5 @@
 import { useState, useEffect } from "react";
+import { open } from "@tauri-apps/plugin-dialog";
 import { useImport } from "../hooks/useImport";
 import { detectDevices } from "../api/commands";
 import type { StorageDevice } from "../types";
@@ -27,6 +28,7 @@ export function Import() {
 
   const [devices, setDevices] = useState<StorageDevice[]>([]);
   const [selectedSource, setSelectedSource] = useState("");
+  const [sourcePath, setSourcePath] = useState("");
   const [selectedTargets, setSelectedTargets] = useState<string[]>([]);
 
   useEffect(() => {
@@ -60,7 +62,10 @@ export function Import() {
             <label>Source Device</label>
             <select
               value={selectedSource}
-              onChange={(e) => setSelectedSource(e.target.value)}
+              onChange={(e) => {
+                setSelectedSource(e.target.value);
+                setSourcePath(e.target.value);
+              }}
             >
               <option value="">Select SD card / removable drive...</option>
               {removableDevices.map((d) => (
@@ -71,10 +76,35 @@ export function Import() {
               ))}
             </select>
           </div>
+          {selectedSource && (
+            <div className="form-group">
+              <label>Path (narrow to a specific folder)</label>
+              <div className="path-input-row">
+                <input
+                  type="text"
+                  value={sourcePath}
+                  onChange={(e) => setSourcePath(e.target.value)}
+                  placeholder={selectedSource}
+                />
+                <button
+                  onClick={async () => {
+                    const selected = await open({
+                      directory: true,
+                      multiple: false,
+                      defaultPath: selectedSource,
+                    });
+                    if (selected) setSourcePath(selected);
+                  }}
+                >
+                  Browse
+                </button>
+              </div>
+            </div>
+          )}
           <button
             className="btn-primary"
-            disabled={!selectedSource}
-            onClick={() => analyze(selectedSource)}
+            disabled={!sourcePath}
+            onClick={() => analyze(sourcePath)}
           >
             Analyze
           </button>

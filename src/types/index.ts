@@ -63,7 +63,21 @@ export type ScanEvent =
   | { FileHashed: { path: string; hash: string } }
   | { Finished: { scanned: number; hashed: number; added: number; removed: number } }
   | { Error: { message: string } }
-  | "Cancelled";
+  | "Cancelled"
+  | { Paused: { scanned: number; hashed: number; added: number; total: number } };
+
+export interface PendingScan {
+  id: number;
+  scan_type: string;
+  target: string;
+  device_id: string;
+  mode: string;
+  total_files: number;
+  processed: number;
+  hashed: number;
+  added: number;
+  paused_at: string;
+}
 
 export interface Project {
   id: number;
@@ -90,6 +104,19 @@ export interface ProjectDetail {
   project: Project;
   stats: ProjectStats;
   files: FileSafety[];
+}
+
+export interface NetworkDrive {
+  id: string;
+  label: string;
+  protocol: string;
+  host: string;
+  share_path: string;
+  username: string;
+  mount_point: string;
+  device_type: string;
+  created_at: string;
+  is_mounted: boolean;
 }
 
 export interface ImportFile {
@@ -130,4 +157,5 @@ export type ImportEvent =
   | { CopyProgress: DeviceCopyProgress }
   | "CopyComplete"
   | { Error: { message: string } }
-  | "Cancelled";
+  | "Cancelled"
+  | { Paused: { processed: number; total: number } };

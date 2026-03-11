@@ -33,6 +33,12 @@ pub async fn run_migrations(pool: &DbPool) -> Result<(), AppError> {
     sqlx::raw_sql(sql).execute(pool).await?;
     let sql2 = include_str!("../migrations/002_projects.sql");
     sqlx::raw_sql(sql2).execute(pool).await?;
+    let sql3 = include_str!("../migrations/003_network_drives.sql");
+    sqlx::raw_sql(sql3).execute(pool).await?;
+    let sql4 = include_str!("../migrations/004_pending_scans.sql");
+    sqlx::raw_sql(sql4).execute(pool).await?;
+    let sql5 = include_str!("../migrations/005_dir_cache.sql");
+    sqlx::raw_sql(sql5).execute(pool).await?;
     Ok(())
 }
 
@@ -73,6 +79,19 @@ pub async fn set_device_type(pool: &DbPool, device_id: &str, device_type: &str) 
         .bind(device_id)
         .execute(pool)
         .await?;
+    Ok(())
+}
+
+pub async fn delete_device(pool: &DbPool, device_id: &str) -> Result<(), AppError> {
+    sqlx::query("DELETE FROM file_locations WHERE device_id = ?")
+        .bind(device_id)
+        .execute(pool)
+        .await?;
+    sqlx::query("DELETE FROM storage_devices WHERE id = ?")
+        .bind(device_id)
+        .execute(pool)
+        .await?;
+    cleanup_orphaned_files(pool).await?;
     Ok(())
 }
 
@@ -126,19 +145,27 @@ pub async fn upsert_location(
     Ok(())
 }
 
-pub async fn get_existing_location(
+pub async fn get_locations_by_prefix(
     pool: &DbPool,
     device_id: &str,
-    file_path: &str,
-) -> Result<Option<FileLocation>, AppError> {
-    let loc = sqlx::query_as::<_, FileLocation>(
-        "SELECT * FROM file_locations WHERE device_id = ? AND file_path = ?"
+    prefix: &str,
+) -> Result<HashMap<String, FileLocation>, AppError> {
+    let prefix_pattern = format!(
+        "{}%",
+        prefix.replace('%', "\\%").replace('_', "\\_")
+    );
+    let rows = sqlx::query_as::<_, FileLocation>(
+        "SELECT * FROM file_locations WHERE device_id = ? AND file_path LIKE ? ESCAPE '\\'"
     )
     .bind(device_id)
-    .bind(file_path)
-    .fetch_optional(pool)
+    .bind(&prefix_pattern)
+    .fetch_all(pool)
     .await?;
-    Ok(loc)
+    let mut map = HashMap::with_capacity(rows.len());
+    for loc in rows {
+        map.insert(loc.file_path.clone(), loc);
+    }
+    Ok(map)
 }
 
 pub async fn get_files_on_device(pool: &DbPool, device_id: &str) -> Result<Vec<FileLocation>, AppError> {
@@ -520,6 +547,213 @@ pub async fn get_project_stats(
         backed_up_pct,
         extensions,
     })
+}
+
+// --- Network drive queries ---
+
+pub async fn insert_network_drive(pool: &DbPool, drive: &NetworkDrive) -> Result<(), AppError> {
+    sqlx::query(
+        "INSERT INTO network_drives (id, label, protocol, host, share_path, username, mount_point, device_type)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?)"
+    )
+    .bind(&drive.id)
+    .bind(&drive.label)
+    .bind(&drive.protocol)
+    .bind(&drive.host)
+    .bind(&drive.share_path)
+    .bind(&drive.username)
+    .bind(&drive.mount_point)
+    .bind(&drive.device_type)
+    .execute(pool)
+    .await?;
+    Ok(())
+}
+
+pub async fn get_all_network_drives(pool: &DbPool) -> Result<Vec<NetworkDrive>, AppError> {
+    let drives = sqlx::query_as::<_, NetworkDrive>(
+        "SELECT * FROM network_drives ORDER BY created_at DESC"
+    )
+    .fetch_all(pool)
+    .await?;
+    Ok(drives)
+}
+
+pub async fn delete_network_drive(pool: &DbPool, id: &str) -> Result<(), AppError> {
+    sqlx::query("DELETE FROM network_drives WHERE id = ?")
+        .bind(id)
+        .execute(pool)
+        .await?;
+    Ok(())
+}
+
+pub async fn update_network_drive_type(pool: &DbPool, id: &str, device_type: &str) -> Result<(), AppError> {
+    sqlx::query("UPDATE network_drives SET device_type = ? WHERE id = ?")
+        .bind(device_type)
+        .bind(id)
+        .execute(pool)
+        .await?;
+    Ok(())
+}
+
+pub async fn get_network_drive(pool: &DbPool, id: &str) -> Result<NetworkDrive, AppError> {
+    let drive = sqlx::query_as::<_, NetworkDrive>(
+        "SELECT * FROM network_drives WHERE id = ?"
+    )
+    .bind(id)
+    .fetch_one(pool)
+    .await?;
+    Ok(drive)
+}
+
+// --- Pending scan queries ---
+
+pub async fn upsert_pending_scan(
+    pool: &DbPool,
+    scan_type: &str,
+    target: &str,
+    device_id: &str,
+    mode: &str,
+    total_files: i64,
+    processed: i64,
+    hashed: i64,
+    added: i64,
+) -> Result<(), AppError> {
+    sqlx::query(
+        "INSERT INTO pending_scans (scan_type, target, device_id, mode, total_files, processed, hashed, added, paused_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
+         ON CONFLICT(scan_type, target, device_id) DO UPDATE SET
+           mode = excluded.mode,
+           total_files = excluded.total_files,
+           processed = excluded.processed,
+           hashed = excluded.hashed,
+           added = excluded.added,
+           paused_at = datetime('now')"
+    )
+    .bind(scan_type)
+    .bind(target)
+    .bind(device_id)
+    .bind(mode)
+    .bind(total_files)
+    .bind(processed)
+    .bind(hashed)
+    .bind(added)
+    .execute(pool)
+    .await?;
+    Ok(())
+}
+
+pub async fn get_pending_scans(pool: &DbPool) -> Result<Vec<PendingScan>, AppError> {
+    let scans = sqlx::query_as::<_, PendingScan>(
+        "SELECT * FROM pending_scans ORDER BY paused_at DESC"
+    )
+    .fetch_all(pool)
+    .await?;
+    Ok(scans)
+}
+
+pub async fn delete_pending_scan(pool: &DbPool, id: i64) -> Result<(), AppError> {
+    sqlx::query("DELETE FROM pending_scans WHERE id = ?")
+        .bind(id)
+        .execute(pool)
+        .await?;
+    Ok(())
+}
+
+pub async fn delete_pending_scan_by_target(pool: &DbPool, scan_type: &str, target: &str) -> Result<(), AppError> {
+    sqlx::query("DELETE FROM pending_scans WHERE scan_type = ? AND target = ?")
+        .bind(scan_type)
+        .bind(target)
+        .execute(pool)
+        .await?;
+    Ok(())
+}
+
+// --- Dir cache queries ---
+
+pub async fn get_dir_cache(
+    pool: &DbPool,
+    device_id: &str,
+    prefix: &str,
+) -> Result<HashMap<String, DirCacheEntry>, AppError> {
+    let prefix_pattern = format!(
+        "{}%",
+        prefix.replace('%', "\\%").replace('_', "\\_")
+    );
+    let rows = sqlx::query_as::<_, (String, String, i64)>(
+        "SELECT dir_path, dir_mtime, file_count FROM dir_cache WHERE device_id = ? AND dir_path LIKE ? ESCAPE '\\'"
+    )
+    .bind(device_id)
+    .bind(&prefix_pattern)
+    .fetch_all(pool)
+    .await?;
+    let mut map = HashMap::with_capacity(rows.len());
+    for (path, mtime, count) in rows {
+        map.insert(path, DirCacheEntry { dir_mtime: mtime, file_count: count });
+    }
+    Ok(map)
+}
+
+pub async fn upsert_dir_cache_batch(
+    pool: &DbPool,
+    device_id: &str,
+    entries: &[(String, String, i64)], // (dir_path, dir_mtime, file_count)
+) -> Result<(), AppError> {
+    for chunk in entries.chunks(500) {
+        let mut sql = String::from(
+            "INSERT INTO dir_cache (device_id, dir_path, dir_mtime, file_count) VALUES "
+        );
+        let mut first = true;
+        for _ in chunk {
+            if !first { sql.push(','); }
+            sql.push_str("(?,?,?,?)");
+            first = false;
+        }
+        sql.push_str(" ON CONFLICT(device_id, dir_path) DO UPDATE SET dir_mtime = excluded.dir_mtime, file_count = excluded.file_count");
+        let mut query = sqlx::query(&sql);
+        for (path, mtime, count) in chunk {
+            query = query.bind(device_id).bind(path).bind(mtime).bind(count);
+        }
+        query.execute(pool).await?;
+    }
+    Ok(())
+}
+
+pub async fn remove_stale_dir_cache(
+    pool: &DbPool,
+    device_id: &str,
+    prefix: &str,
+    seen_dirs: &[String],
+) -> Result<(), AppError> {
+    let prefix_pattern = format!(
+        "{}%",
+        prefix.replace('%', "\\%").replace('_', "\\_")
+    );
+    let existing = sqlx::query_as::<_, (String,)>(
+        "SELECT dir_path FROM dir_cache WHERE device_id = ? AND dir_path LIKE ? ESCAPE '\\'"
+    )
+    .bind(device_id)
+    .bind(&prefix_pattern)
+    .fetch_all(pool)
+    .await?;
+
+    let seen_set: std::collections::HashSet<&str> = seen_dirs.iter().map(|s| s.as_str()).collect();
+    let stale: Vec<&str> = existing
+        .iter()
+        .filter(|(p,)| !seen_set.contains(p.as_str()))
+        .map(|(p,)| p.as_str())
+        .collect();
+
+    for chunk in stale.chunks(500) {
+        let placeholders: String = chunk.iter().map(|_| "?").collect::<Vec<_>>().join(",");
+        let sql = format!("DELETE FROM dir_cache WHERE device_id = ? AND dir_path IN ({})", placeholders);
+        let mut query = sqlx::query(&sql);
+        query = query.bind(device_id);
+        for path in chunk {
+            query = query.bind(path);
+        }
+        query.execute(pool).await?;
+    }
+    Ok(())
 }
 
 pub async fn get_dashboard_stats(pool: &DbPool) -> Result<DashboardStats, AppError> {

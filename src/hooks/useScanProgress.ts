@@ -1,9 +1,10 @@
 import { useState, useCallback, useRef } from "react";
 import type { ScanEvent } from "../types";
-import { startScan, cancelScan } from "../api/commands";
+import { startScan, cancelScan, pauseScan } from "../api/commands";
 
 export interface ScanState {
   scanning: boolean;
+  paused: boolean;
   total: number;
   scanned: number;
   hashed: number;
@@ -16,6 +17,7 @@ export interface ScanState {
 
 const initialState: ScanState = {
   scanning: false,
+  paused: false,
   total: 0,
   scanned: 0,
   hashed: 0,
@@ -40,21 +42,34 @@ export function useScanProgress() {
         scanningRef.current = false;
         return;
       }
-      if ("Started" in event) {
+      if (typeof event === "object" && "Paused" in event) {
+        setState((s) => ({
+          ...s,
+          scanning: false,
+          paused: true,
+          scanned: event.Paused.scanned,
+          hashed: event.Paused.hashed,
+          added: event.Paused.added,
+          total: event.Paused.total,
+        }));
+        scanningRef.current = false;
+        return;
+      }
+      if (typeof event === "object" && "Started" in event) {
         setState((s) => ({ ...s, total: event.Started.total_files }));
-      } else if ("Progress" in event) {
+      } else if (typeof event === "object" && "Progress" in event) {
         setState((s) => ({
           ...s,
           scanned: event.Progress.scanned,
           total: event.Progress.total,
         }));
-      } else if ("FileHashed" in event) {
+      } else if (typeof event === "object" && "FileHashed" in event) {
         setState((s) => ({
           ...s,
           hashed: s.hashed + 1,
           lastFile: event.FileHashed.path,
         }));
-      } else if ("Finished" in event) {
+      } else if (typeof event === "object" && "Finished" in event) {
         setState((s) => ({
           ...s,
           scanning: false,
@@ -65,7 +80,7 @@ export function useScanProgress() {
           removed: event.Finished.removed,
         }));
         scanningRef.current = false;
-      } else if ("Error" in event) {
+      } else if (typeof event === "object" && "Error" in event) {
         setState((s) => ({ ...s, error: event.Error.message }));
       }
     };
@@ -88,9 +103,15 @@ export function useScanProgress() {
     }
   }, []);
 
+  const pause = useCallback(async () => {
+    if (scanningRef.current) {
+      await pauseScan();
+    }
+  }, []);
+
   const reset = useCallback(() => {
     setState(initialState);
   }, []);
 
-  return { ...state, scan, cancel, reset };
+  return { ...state, scan, cancel, pause, reset };
 }
