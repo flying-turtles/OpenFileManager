@@ -141,19 +141,27 @@ pub async fn upsert_location(
     Ok(())
 }
 
-pub async fn get_existing_location(
+pub async fn get_locations_by_prefix(
     pool: &DbPool,
     device_id: &str,
-    file_path: &str,
-) -> Result<Option<FileLocation>, AppError> {
-    let loc = sqlx::query_as::<_, FileLocation>(
-        "SELECT * FROM file_locations WHERE device_id = ? AND file_path = ?"
+    prefix: &str,
+) -> Result<HashMap<String, FileLocation>, AppError> {
+    let prefix_pattern = format!(
+        "{}%",
+        prefix.replace('%', "\\%").replace('_', "\\_")
+    );
+    let rows = sqlx::query_as::<_, FileLocation>(
+        "SELECT * FROM file_locations WHERE device_id = ? AND file_path LIKE ? ESCAPE '\\'"
     )
     .bind(device_id)
-    .bind(file_path)
-    .fetch_optional(pool)
+    .bind(&prefix_pattern)
+    .fetch_all(pool)
     .await?;
-    Ok(loc)
+    let mut map = HashMap::with_capacity(rows.len());
+    for loc in rows {
+        map.insert(loc.file_path.clone(), loc);
+    }
+    Ok(map)
 }
 
 pub async fn get_files_on_device(pool: &DbPool, device_id: &str) -> Result<Vec<FileLocation>, AppError> {

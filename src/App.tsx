@@ -45,7 +45,9 @@ function App() {
       <main className="content">
         {page === "dashboard" && <Dashboard />}
         {page === "devices" && <Devices onScanDevice={handleScanDevice} />}
-        {page === "scanner" && <Scanner initialDevice={scanDevice} />}
+        <div style={{ display: page === "scanner" ? "contents" : "none" }}>
+          <Scanner initialDevice={scanDevice} />
+        </div>
         {page === "files" && <FileBrowser />}
         <div style={{ display: page === "import" ? "contents" : "none" }}>
           <Import />

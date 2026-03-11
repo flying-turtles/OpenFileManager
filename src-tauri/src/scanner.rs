@@ -1,6 +1,7 @@
 use std::path::PathBuf;
 use std::time::SystemTime;
 
+use futures::stream::{self, StreamExt};
 use tauri::ipc::Channel;
 use tokio_util::sync::CancellationToken;
 use walkdir::WalkDir;
@@ -12,6 +13,21 @@ use crate::hasher;
 use crate::models::ScanEvent;
 
 const QUICK_HASH_THRESHOLD: u64 = 2 * 1024 * 1024 * 1024; // 2 GB
+
+struct FileWorkItem {
+    path: PathBuf,
+    relative_path: String,
+    file_name: String,
+    extension: String,
+    file_size: i64,
+    modified_at: Option<String>,
+    is_new: bool,
+}
+
+struct HashResult {
+    item: FileWorkItem,
+    hash: String,
+}
 
 pub async fn run_scan(
     pool: DbPool,
@@ -37,11 +53,21 @@ pub async fn run_scan(
     let total = files.len() as u64;
     let _ = channel.send(ScanEvent::Started { total_files: total });
 
-    let mut scanned: u64 = 0;
-    let mut hashed: u64 = 0;
-    let mut added: u64 = 0;
-    let mut seen_paths: Vec<String> = Vec::with_capacity(files.len());
     let is_quick = mode == "quick";
+
+    // Batch-fetch existing locations for this scan prefix
+    let scan_prefix = target
+        .strip_prefix(&mount_point)
+        .unwrap_or(&target)
+        .to_string_lossy()
+        .to_string();
+    let existing_locations = db::get_locations_by_prefix(&pool, &device_id, &scan_prefix).await?;
+
+    // === Phase 1: classify files ===
+    let mut to_hash: Vec<FileWorkItem> = Vec::new();
+    let mut seen_paths: Vec<String> = Vec::with_capacity(files.len());
+    let mut scanned: u64 = 0;
+    let mut added: u64 = 0;
 
     for file_path in &files {
         if cancel_token.is_cancelled() {
@@ -72,11 +98,10 @@ pub async fn run_scan(
             .modified()
             .ok()
             .and_then(|t| t.duration_since(SystemTime::UNIX_EPOCH).ok())
-            .map(|d| {
+            .and_then(|d| {
                 chrono::DateTime::from_timestamp(d.as_secs() as i64, 0)
                     .map(|dt| dt.format("%Y-%m-%d %H:%M:%S").to_string())
-            })
-            .flatten();
+            });
 
         let relative_path = file_path
             .strip_prefix(&mount_point)
@@ -96,13 +121,12 @@ pub async fn run_scan(
 
         seen_paths.push(relative_path.clone());
 
-        // Check if location already exists in DB
-        let existing = db::get_existing_location(&pool, &device_id, &relative_path).await.ok().flatten();
+        let existing = existing_locations.get(&relative_path);
         let is_new = existing.is_none();
 
         // Quick mode: skip if size+mtime match existing record
         if is_quick {
-            if let Some(ref ex) = existing {
+            if let Some(ex) = existing {
                 let size_matches = ex.file_size == file_size;
                 let mtime_matches = ex.modified_at.as_deref() == modified_at.as_deref();
                 if size_matches && mtime_matches {
@@ -119,36 +143,22 @@ pub async fn run_scan(
         };
 
         if should_hash {
-            match hasher::hash_file(file_path).await {
-                Ok(hash) => {
-                    db::upsert_file(&pool, &hash, file_size, &file_name, &extension).await?;
-                    db::upsert_location(
-                        &pool,
-                        &hash,
-                        &device_id,
-                        &relative_path,
-                        &file_name,
-                        file_size,
-                        modified_at.as_deref(),
-                        &mode,
-                    )
-                    .await?;
-                    hashed += 1;
-                    if is_new { added += 1; }
-                    let _ = channel.send(ScanEvent::FileHashed {
-                        path: relative_path,
-                        hash,
-                    });
-                }
-                Err(e) => {
-                    let _ = channel.send(ScanEvent::Error {
-                        message: format!("{}: {}", file_path.display(), e),
-                    });
-                }
-            }
+            to_hash.push(FileWorkItem {
+                path: file_path.clone(),
+                relative_path,
+                file_name,
+                extension,
+                file_size,
+                modified_at,
+                is_new,
+            });
         } else {
             // Deferred: store with a placeholder hash based on metadata
-            let placeholder = format!("deferred:{}:{}", file_size, modified_at.as_deref().unwrap_or(""));
+            let placeholder = format!(
+                "deferred:{}:{}",
+                file_size,
+                modified_at.as_deref().unwrap_or("")
+            );
             db::upsert_file(&pool, &placeholder, file_size, &file_name, &extension).await?;
             db::upsert_location(
                 &pool,
@@ -161,21 +171,89 @@ pub async fn run_scan(
                 "deferred",
             )
             .await?;
-            if is_new { added += 1; }
+            if is_new {
+                added += 1;
+            }
         }
     }
 
-    // Remove locations for files that no longer exist under scanned path
-    let scan_prefix = target
-        .strip_prefix(&mount_point)
-        .unwrap_or(&target)
-        .to_string_lossy()
-        .to_string();
-    let removed = db::remove_stale_locations(&pool, &device_id, &scan_prefix, &seen_paths).await?;
+    // === Phase 2: parallel hashing ===
+    let parallelism = std::thread::available_parallelism()
+        .map(|n| n.get())
+        .unwrap_or(4);
+
+    let mut hashed: u64 = 0;
+
+    let cancel_token_stream = cancel_token.clone();
+    let mut hash_stream = stream::iter(to_hash)
+        .map(|item| {
+            let token = cancel_token_stream.clone();
+            tokio::task::spawn_blocking(move || {
+                if token.is_cancelled() {
+                    return Err(AppError::General("cancelled".into()));
+                }
+                let hash = hasher::hash_file_sync(&item.path)?;
+                Ok(HashResult { item, hash })
+            })
+        })
+        .buffer_unordered(parallelism);
+
+    while let Some(result) = hash_stream.next().await {
+        if cancel_token.is_cancelled() {
+            let _ = channel.send(ScanEvent::Cancelled);
+            return Ok(());
+        }
+
+        match result {
+            Ok(Ok(HashResult { item, hash })) => {
+                db::upsert_file(&pool, &hash, item.file_size, &item.file_name, &item.extension)
+                    .await?;
+                db::upsert_location(
+                    &pool,
+                    &hash,
+                    &device_id,
+                    &item.relative_path,
+                    &item.file_name,
+                    item.file_size,
+                    item.modified_at.as_deref(),
+                    &mode,
+                )
+                .await?;
+                hashed += 1;
+                if item.is_new {
+                    added += 1;
+                }
+                let _ = channel.send(ScanEvent::FileHashed {
+                    path: item.relative_path,
+                    hash,
+                });
+            }
+            Ok(Err(e)) => {
+                let msg = e.to_string();
+                if msg != "cancelled" {
+                    let _ = channel.send(ScanEvent::Error { message: msg });
+                }
+            }
+            Err(e) => {
+                let _ = channel.send(ScanEvent::Error {
+                    message: format!("task join error: {}", e),
+                });
+            }
+        }
+    }
+
+    // === Phase 3: cleanup stale locations ===
+    let removed =
+        db::remove_stale_locations(&pool, &device_id, &scan_prefix, &seen_paths).await?;
     if removed > 0 {
         db::cleanup_orphaned_files(&pool).await?;
     }
 
-    let _ = channel.send(ScanEvent::Finished { scanned, hashed, added, removed });
+    let _ = channel.send(ScanEvent::Finished {
+        scanned,
+        hashed,
+        added,
+        removed,
+    });
     Ok(())
 }

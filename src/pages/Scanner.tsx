@@ -15,6 +15,12 @@ export function Scanner({ initialDevice }: Props) {
   const [dragOver, setDragOver] = useState(false);
   const progress = useScanProgress();
 
+  useEffect(() => {
+    if (initialDevice?.mount_point) {
+      setTarget(initialDevice.mount_point);
+    }
+  }, [initialDevice]);
+
   const handleStart = () => {
     if (!target) return;
     progress.scan(target, mode);
