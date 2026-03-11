@@ -1,4 +1,6 @@
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::Arc;
 use std::time::SystemTime;
 
 use futures::stream::{self, StreamExt};
@@ -29,12 +31,34 @@ struct HashResult {
     hash: String,
 }
 
+/// Shared counters so pause can snapshot progress
+pub struct ScanProgress {
+    pub scanned: AtomicU64,
+    pub hashed: AtomicU64,
+    pub added: AtomicU64,
+    pub total: AtomicU64,
+    pub pausing: AtomicBool,
+}
+
+impl ScanProgress {
+    pub fn new() -> Self {
+        Self {
+            scanned: AtomicU64::new(0),
+            hashed: AtomicU64::new(0),
+            added: AtomicU64::new(0),
+            total: AtomicU64::new(0),
+            pausing: AtomicBool::new(false),
+        }
+    }
+}
+
 pub async fn run_scan(
     pool: DbPool,
     target: PathBuf,
     mode: String, // "quick" or "full"
     channel: Channel<ScanEvent>,
     cancel_token: CancellationToken,
+    progress: Arc<ScanProgress>,
 ) -> Result<(), AppError> {
     // Determine which device this path belongs to
     let volumes = detect_volumes();
@@ -51,6 +75,7 @@ pub async fn run_scan(
         .collect();
 
     let total = files.len() as u64;
+    progress.total.store(total, Ordering::Relaxed);
     let _ = channel.send(ScanEvent::Started { total_files: total });
 
     let is_quick = mode == "quick";
@@ -71,11 +96,19 @@ pub async fn run_scan(
 
     for file_path in &files {
         if cancel_token.is_cancelled() {
-            let _ = channel.send(ScanEvent::Cancelled);
+            if progress.pausing.load(Ordering::Relaxed) {
+                let s = progress.scanned.load(Ordering::Relaxed);
+                let h = progress.hashed.load(Ordering::Relaxed);
+                let a = progress.added.load(Ordering::Relaxed);
+                let _ = channel.send(ScanEvent::Paused { scanned: s, hashed: h, added: a, total });
+            } else {
+                let _ = channel.send(ScanEvent::Cancelled);
+            }
             return Ok(());
         }
 
         scanned += 1;
+        progress.scanned.store(scanned, Ordering::Relaxed);
         if scanned % 50 == 0 || scanned == total {
             let _ = channel.send(ScanEvent::Progress {
                 scanned,
@@ -173,6 +206,7 @@ pub async fn run_scan(
             .await?;
             if is_new {
                 added += 1;
+                progress.added.store(added, Ordering::Relaxed);
             }
         }
     }
@@ -200,7 +234,14 @@ pub async fn run_scan(
 
     while let Some(result) = hash_stream.next().await {
         if cancel_token.is_cancelled() {
-            let _ = channel.send(ScanEvent::Cancelled);
+            if progress.pausing.load(Ordering::Relaxed) {
+                let s = progress.scanned.load(Ordering::Relaxed);
+                let h = progress.hashed.load(Ordering::Relaxed);
+                let a = progress.added.load(Ordering::Relaxed);
+                let _ = channel.send(ScanEvent::Paused { scanned: s, hashed: h, added: a, total });
+            } else {
+                let _ = channel.send(ScanEvent::Cancelled);
+            }
             return Ok(());
         }
 
@@ -220,8 +261,10 @@ pub async fn run_scan(
                 )
                 .await?;
                 hashed += 1;
+                progress.hashed.store(hashed, Ordering::Relaxed);
                 if item.is_new {
                     added += 1;
+                    progress.added.store(added, Ordering::Relaxed);
                 }
                 let _ = channel.send(ScanEvent::FileHashed {
                     path: item.relative_path,
@@ -248,6 +291,9 @@ pub async fn run_scan(
     if removed > 0 {
         db::cleanup_orphaned_files(&pool).await?;
     }
+
+    // Scan finished successfully — remove any pending record
+    let _ = db::delete_pending_scan_by_target(&pool, "scan", &target_str).await;
 
     let _ = channel.send(ScanEvent::Finished {
         scanned,

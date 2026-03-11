@@ -39,6 +39,9 @@ pub fn run() {
             app.manage(AppState {
                 pool,
                 cancel_token: Arc::new(Mutex::new(None)),
+                scan_progress: Arc::new(Mutex::new(None)),
+                scan_target: Arc::new(Mutex::new(None)),
+                scan_mode: Arc::new(Mutex::new(None)),
                 import_cancel_token: Arc::new(Mutex::new(None)),
                 import_analysis: Arc::new(Mutex::new(None)),
             });
@@ -59,6 +62,9 @@ pub fn run() {
             commands::remove_device,
             commands::start_scan,
             commands::cancel_scan,
+            commands::pause_scan,
+            commands::get_pending_scans,
+            commands::dismiss_pending_scan,
             commands::get_files_on_device,
             commands::get_file_safety,
             commands::get_unsafe_files,

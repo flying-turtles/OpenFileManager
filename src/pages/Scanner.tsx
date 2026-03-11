@@ -1,9 +1,10 @@
 import { useState, useEffect, useCallback } from "react";
 import { getCurrentWebviewWindow } from "@tauri-apps/api/webviewWindow";
 import { open } from "@tauri-apps/plugin-dialog";
-import type { StorageDevice } from "../types";
+import type { StorageDevice, PendingScan } from "../types";
 import { useScanProgress } from "../hooks/useScanProgress";
 import { ProgressBar } from "../components/ProgressBar";
+import { getPendingScans, dismissPendingScan } from "../api/commands";
 
 interface Props {
   initialDevice?: StorageDevice;
@@ -13,6 +14,7 @@ export function Scanner({ initialDevice }: Props) {
   const [target, setTarget] = useState(initialDevice?.mount_point || "");
   const [mode, setMode] = useState<"quick" | "full">("quick");
   const [dragOver, setDragOver] = useState(false);
+  const [pendingScans, setPendingScans] = useState<PendingScan[]>([]);
   const progress = useScanProgress();
 
   useEffect(() => {
@@ -21,9 +23,24 @@ export function Scanner({ initialDevice }: Props) {
     }
   }, [initialDevice]);
 
+  useEffect(() => {
+    getPendingScans().then(setPendingScans);
+  }, [progress.paused, progress.finished]);
+
   const handleStart = () => {
     if (!target) return;
     progress.scan(target, mode);
+  };
+
+  const handleResume = (ps: PendingScan) => {
+    setTarget(ps.target);
+    setMode(ps.mode as "quick" | "full");
+    progress.scan(ps.target, ps.mode);
+  };
+
+  const handleDismiss = async (ps: PendingScan) => {
+    await dismissPendingScan(ps.id);
+    setPendingScans((prev) => prev.filter((s) => s.id !== ps.id));
   };
 
   const handleBrowse = async () => {
@@ -33,11 +50,14 @@ export function Scanner({ initialDevice }: Props) {
     }
   };
 
-  const handleDrop = useCallback((paths: string[]) => {
-    if (paths.length > 0 && !progress.scanning) {
-      setTarget(paths[0]);
-    }
-  }, [progress.scanning]);
+  const handleDrop = useCallback(
+    (paths: string[]) => {
+      if (paths.length > 0 && !progress.scanning) {
+        setTarget(paths[0]);
+      }
+    },
+    [progress.scanning]
+  );
 
   useEffect(() => {
     const webview = getCurrentWebviewWindow();
@@ -56,9 +76,35 @@ export function Scanner({ initialDevice }: Props) {
     };
   }, [handleDrop]);
 
+  const isBusy = progress.scanning;
+
   return (
     <div className="page">
       <h1>Scanner</h1>
+
+      {pendingScans.length > 0 && !isBusy && !progress.finished && !progress.paused && (
+        <div className="pending-scans">
+          <h3>On Hold</h3>
+          {pendingScans.map((ps) => (
+            <div key={ps.id} className="pending-scan-row">
+              <div className="pending-scan-info">
+                <span className="pending-scan-target">{ps.target}</span>
+                <span className="pending-scan-stats">
+                  {ps.processed} / {ps.total_files} scanned · {ps.hashed} hashed · {ps.mode}
+                </span>
+                <span className="pending-scan-date">Paused {ps.paused_at}</span>
+              </div>
+              <div className="pending-scan-actions">
+                <button className="btn-primary" onClick={() => handleResume(ps)}>
+                  Resume
+                </button>
+                <button onClick={() => handleDismiss(ps)}>Dismiss</button>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+
       <div className="scan-config">
         <div className="form-group">
           <label>Target Path</label>
@@ -68,9 +114,9 @@ export function Scanner({ initialDevice }: Props) {
               value={target}
               onChange={(e) => setTarget(e.target.value)}
               placeholder="Drop a folder here, browse, or type a path..."
-              disabled={progress.scanning}
+              disabled={isBusy}
             />
-            <button onClick={handleBrowse} disabled={progress.scanning}>
+            <button onClick={handleBrowse} disabled={isBusy}>
               Browse
             </button>
           </div>
@@ -82,33 +128,38 @@ export function Scanner({ initialDevice }: Props) {
             <button
               className={mode === "quick" ? "active" : ""}
               onClick={() => setMode("quick")}
-              disabled={progress.scanning}
+              disabled={isBusy}
             >
               Quick
             </button>
             <button
               className={mode === "full" ? "active" : ""}
               onClick={() => setMode("full")}
-              disabled={progress.scanning}
+              disabled={isBusy}
             >
               Full
             </button>
           </div>
         </div>
         <div className="scan-actions">
-          {!progress.scanning ? (
+          {!isBusy && !progress.paused ? (
             <button className="btn-primary" onClick={handleStart} disabled={!target}>
               Start Scan
             </button>
-          ) : (
-            <button className="btn-danger" onClick={progress.cancel}>
-              Cancel
-            </button>
-          )}
+          ) : isBusy ? (
+            <>
+              <button className="btn-warning" onClick={progress.pause}>
+                Pause
+              </button>
+              <button className="btn-danger" onClick={progress.cancel}>
+                Cancel
+              </button>
+            </>
+          ) : null}
         </div>
       </div>
 
-      {(progress.scanning || progress.finished) && (
+      {(isBusy || progress.finished || progress.paused) && (
         <ProgressBar
           scanned={progress.scanned}
           total={progress.total}
@@ -119,10 +170,25 @@ export function Scanner({ initialDevice }: Props) {
 
       {progress.error && <div className="error-msg">{progress.error}</div>}
 
+      {progress.paused && (
+        <div className="scan-result scan-paused">
+          <span>
+            Scan paused: {progress.scanned} scanned, {progress.hashed} hashed, {progress.added} added
+          </span>
+          <div className="scan-paused-actions">
+            <button className="btn-primary" onClick={handleStart}>
+              Resume
+            </button>
+            <button onClick={progress.reset}>Dismiss</button>
+          </div>
+        </div>
+      )}
+
       {progress.finished && (
         <div className="scan-result">
           <span>
-            Scan complete: {progress.scanned} scanned, {progress.hashed} hashed, {progress.added} added, {progress.removed} removed
+            Scan complete: {progress.scanned} scanned, {progress.hashed} hashed,{" "}
+            {progress.added} added, {progress.removed} removed
           </span>
           <button onClick={progress.reset}>New Scan</button>
         </div>

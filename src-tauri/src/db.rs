@@ -35,6 +35,8 @@ pub async fn run_migrations(pool: &DbPool) -> Result<(), AppError> {
     sqlx::raw_sql(sql2).execute(pool).await?;
     let sql3 = include_str!("../migrations/003_network_drives.sql");
     sqlx::raw_sql(sql3).execute(pool).await?;
+    let sql4 = include_str!("../migrations/004_pending_scans.sql");
+    sqlx::raw_sql(sql4).execute(pool).await?;
     Ok(())
 }
 
@@ -599,6 +601,69 @@ pub async fn get_network_drive(pool: &DbPool, id: &str) -> Result<NetworkDrive, 
     .fetch_one(pool)
     .await?;
     Ok(drive)
+}
+
+// --- Pending scan queries ---
+
+pub async fn upsert_pending_scan(
+    pool: &DbPool,
+    scan_type: &str,
+    target: &str,
+    device_id: &str,
+    mode: &str,
+    total_files: i64,
+    processed: i64,
+    hashed: i64,
+    added: i64,
+) -> Result<(), AppError> {
+    sqlx::query(
+        "INSERT INTO pending_scans (scan_type, target, device_id, mode, total_files, processed, hashed, added, paused_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
+         ON CONFLICT(scan_type, target, device_id) DO UPDATE SET
+           mode = excluded.mode,
+           total_files = excluded.total_files,
+           processed = excluded.processed,
+           hashed = excluded.hashed,
+           added = excluded.added,
+           paused_at = datetime('now')"
+    )
+    .bind(scan_type)
+    .bind(target)
+    .bind(device_id)
+    .bind(mode)
+    .bind(total_files)
+    .bind(processed)
+    .bind(hashed)
+    .bind(added)
+    .execute(pool)
+    .await?;
+    Ok(())
+}
+
+pub async fn get_pending_scans(pool: &DbPool) -> Result<Vec<PendingScan>, AppError> {
+    let scans = sqlx::query_as::<_, PendingScan>(
+        "SELECT * FROM pending_scans ORDER BY paused_at DESC"
+    )
+    .fetch_all(pool)
+    .await?;
+    Ok(scans)
+}
+
+pub async fn delete_pending_scan(pool: &DbPool, id: i64) -> Result<(), AppError> {
+    sqlx::query("DELETE FROM pending_scans WHERE id = ?")
+        .bind(id)
+        .execute(pool)
+        .await?;
+    Ok(())
+}
+
+pub async fn delete_pending_scan_by_target(pool: &DbPool, scan_type: &str, target: &str) -> Result<(), AppError> {
+    sqlx::query("DELETE FROM pending_scans WHERE scan_type = ? AND target = ?")
+        .bind(scan_type)
+        .bind(target)
+        .execute(pool)
+        .await?;
+    Ok(())
 }
 
 pub async fn get_dashboard_stats(pool: &DbPool) -> Result<DashboardStats, AppError> {

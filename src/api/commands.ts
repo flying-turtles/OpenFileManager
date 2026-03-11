@@ -11,6 +11,7 @@ import type {
   Project,
   ProjectDetail,
   NetworkDrive,
+  PendingScan,
 } from "../types";
 
 export async function detectDevices(): Promise<StorageDevice[]> {
@@ -47,6 +48,18 @@ export async function startScan(
 
 export async function cancelScan(): Promise<void> {
   return invoke("cancel_scan");
+}
+
+export async function pauseScan(): Promise<void> {
+  return invoke("pause_scan");
+}
+
+export async function getPendingScans(): Promise<PendingScan[]> {
+  return invoke("get_pending_scans");
+}
+
+export async function dismissPendingScan(id: number): Promise<void> {
+  return invoke("dismiss_pending_scan", { id });
 }
 
 export async function getFilesOnDevice(
