@@ -12,6 +12,8 @@ import type {
   ProjectDetail,
   NetworkDrive,
   PendingScan,
+  FilePageResult,
+  UnsafeFilePageResult,
 } from "../types";
 
 export async function detectDevices(): Promise<StorageDevice[]> {
@@ -38,12 +40,11 @@ export async function removeDevice(deviceId: string): Promise<void> {
 
 export async function startScan(
   target: string,
-  mode: string,
   onEvent: (event: ScanEvent) => void
 ): Promise<void> {
   const channel = new Channel<ScanEvent>();
   channel.onmessage = onEvent;
-  return invoke("start_scan", { target, mode, onEvent: channel });
+  return invoke("start_scan", { target, onEvent: channel });
 }
 
 export async function cancelScan(): Promise<void> {
@@ -66,6 +67,28 @@ export async function getFilesOnDevice(
   deviceId: string
 ): Promise<FileLocation[]> {
   return invoke("get_files_on_device", { deviceId });
+}
+
+export async function getFilesOnDevicePage(
+  deviceId: string,
+  cursor?: string,
+  limit?: number
+): Promise<FilePageResult> {
+  return invoke("get_files_on_device_page", { deviceId, cursor, limit });
+}
+
+export async function getUnsafeFilesPage(
+  offset?: number,
+  limit?: number
+): Promise<UnsafeFilePageResult> {
+  return invoke("get_unsafe_files_page", { offset, limit });
+}
+
+export async function getSafeFilesPage(
+  offset?: number,
+  limit?: number
+): Promise<UnsafeFilePageResult> {
+  return invoke("get_safe_files_page", { offset, limit });
 }
 
 export async function getFileSafety(
@@ -153,6 +176,14 @@ export async function updateProject(
 
 export async function deleteProject(id: number): Promise<void> {
   return invoke("delete_project", { id });
+}
+
+export async function addLocation(
+  path: string,
+  label: string,
+  deviceType: string
+): Promise<StorageDevice> {
+  return invoke("add_location", { path, label, deviceType });
 }
 
 export async function addNetworkDrive(

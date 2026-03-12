@@ -1,0 +1,1 @@
+-- no-op: quick_hash is now stored directly in blake3_hash column

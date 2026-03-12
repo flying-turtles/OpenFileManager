@@ -60,6 +60,7 @@ export interface DirEntry {
 export type ScanEvent =
   | { Started: { total_files: number } }
   | { Progress: { scanned: number; total: number } }
+  | { HashingStarted: { to_hash: number; skipped: number } }
   | { FileHashed: { path: string; hash: string } }
   | { Finished: { scanned: number; hashed: number; added: number; removed: number } }
   | { Error: { message: string } }
@@ -104,6 +105,18 @@ export interface ProjectDetail {
   project: Project;
   stats: ProjectStats;
   files: FileSafety[];
+}
+
+export interface FilePageResult {
+  files: FileLocation[];
+  next_cursor: string | null;
+  total: number;
+}
+
+export interface UnsafeFilePageResult {
+  files: FileSafety[];
+  total: number;
+  has_more: boolean;
 }
 
 export interface NetworkDrive {

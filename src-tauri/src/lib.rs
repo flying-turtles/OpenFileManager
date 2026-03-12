@@ -41,7 +41,6 @@ pub fn run() {
                 cancel_token: Arc::new(Mutex::new(None)),
                 scan_progress: Arc::new(Mutex::new(None)),
                 scan_target: Arc::new(Mutex::new(None)),
-                scan_mode: Arc::new(Mutex::new(None)),
                 import_cancel_token: Arc::new(Mutex::new(None)),
                 import_analysis: Arc::new(Mutex::new(None)),
             });
@@ -66,8 +65,11 @@ pub fn run() {
             commands::get_pending_scans,
             commands::dismiss_pending_scan,
             commands::get_files_on_device,
+            commands::get_files_on_device_page,
             commands::get_file_safety,
             commands::get_unsafe_files,
+            commands::get_unsafe_files_page,
+            commands::get_safe_files_page,
             commands::get_waste_candidates,
             commands::browse_directory,
             commands::get_file_locations,
@@ -86,6 +88,7 @@ pub fn run() {
             commands::mount_network_drive,
             commands::unmount_network_drive,
             commands::remove_network_drive,
+            commands::add_location,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

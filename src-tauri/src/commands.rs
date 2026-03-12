@@ -19,14 +19,14 @@ pub struct AppState {
     pub cancel_token: Arc<Mutex<Option<CancellationToken>>>,
     pub scan_progress: Arc<Mutex<Option<Arc<ScanProgress>>>>,
     pub scan_target: Arc<Mutex<Option<String>>>,
-    pub scan_mode: Arc<Mutex<Option<String>>>,
     pub import_cancel_token: Arc<Mutex<Option<CancellationToken>>>,
     pub import_analysis: Arc<Mutex<Option<Arc<ImportAnalysis>>>>,
 }
 
 fn mark_connected(mut devices: Vec<StorageDevice>, connected_ids: &HashSet<String>) -> Vec<StorageDevice> {
     for dev in &mut devices {
-        dev.is_connected = connected_ids.contains(&dev.id);
+        dev.is_connected = connected_ids.contains(&dev.id)
+            || std::path::Path::new(&dev.mount_point).exists();
     }
     devices
 }
@@ -71,7 +71,6 @@ pub async fn remove_device(
 pub async fn start_scan(
     state: State<'_, AppState>,
     target: String,
-    mode: String,
     on_event: Channel<ScanEvent>,
 ) -> Result<(), AppError> {
     let pool = state.pool.clone();
@@ -90,17 +89,12 @@ pub async fn start_scan(
         let mut guard = state.scan_target.lock().await;
         *guard = Some(target.clone());
     }
-    {
-        let mut guard = state.scan_mode.lock().await;
-        *guard = Some(mode.clone());
-    }
-
     // Remove any existing pending scan for this target
     let _ = db::delete_pending_scan_by_target(&pool, "scan", &target).await;
 
     let target = PathBuf::from(target);
     tokio::spawn(async move {
-        if let Err(e) = crate::scanner::run_scan(pool, target, mode, on_event.clone(), cancel_token, progress).await {
+        if let Err(e) = crate::scanner::run_scan(pool, target, on_event.clone(), cancel_token, progress).await {
             let _ = on_event.send(ScanEvent::Error {
                 message: e.to_string(),
             });
@@ -135,7 +129,6 @@ pub async fn pause_scan(state: State<'_, AppState>) -> Result<(), AppError> {
 
     // Persist the pending scan
     let target = state.scan_target.lock().await.clone().unwrap_or_default();
-    let mode = state.scan_mode.lock().await.clone().unwrap_or_default();
     if !target.is_empty() {
         let progress_guard = state.scan_progress.lock().await;
         if let Some(p) = progress_guard.as_ref() {
@@ -148,7 +141,7 @@ pub async fn pause_scan(state: State<'_, AppState>) -> Result<(), AppError> {
                 "scan",
                 &target,
                 &device_id,
-                &mode,
+                "quick",
                 p.total.load(std::sync::atomic::Ordering::Relaxed) as i64,
                 p.scanned.load(std::sync::atomic::Ordering::Relaxed) as i64,
                 p.hashed.load(std::sync::atomic::Ordering::Relaxed) as i64,
@@ -175,6 +168,41 @@ pub async fn get_files_on_device(
     device_id: String,
 ) -> Result<Vec<FileLocation>, AppError> {
     db::get_files_on_device(&state.pool, &device_id).await
+}
+
+#[tauri::command]
+pub async fn get_files_on_device_page(
+    state: State<'_, AppState>,
+    device_id: String,
+    cursor: Option<String>,
+    limit: Option<i64>,
+) -> Result<FilePageResult, AppError> {
+    let limit = limit.unwrap_or(500);
+    let (files, next_cursor, total) =
+        db::get_files_on_device_page(&state.pool, &device_id, cursor.as_deref(), limit).await?;
+    Ok(FilePageResult { files, next_cursor, total })
+}
+
+#[tauri::command]
+pub async fn get_unsafe_files_page(
+    state: State<'_, AppState>,
+    offset: Option<i64>,
+    limit: Option<i64>,
+) -> Result<UnsafeFilePageResult, AppError> {
+    let (files, total, has_more) =
+        db::get_unsafe_files_page(&state.pool, offset.unwrap_or(0), limit.unwrap_or(500)).await?;
+    Ok(UnsafeFilePageResult { files, total, has_more })
+}
+
+#[tauri::command]
+pub async fn get_safe_files_page(
+    state: State<'_, AppState>,
+    offset: Option<i64>,
+    limit: Option<i64>,
+) -> Result<UnsafeFilePageResult, AppError> {
+    let (files, total, has_more) =
+        db::get_safe_files_page(&state.pool, offset.unwrap_or(0), limit.unwrap_or(500)).await?;
+    Ok(UnsafeFilePageResult { files, total, has_more })
 }
 
 #[tauri::command]
@@ -479,6 +507,40 @@ pub async fn remove_network_drive(state: State<'_, AppState>, drive_id: String) 
 
     db::delete_network_drive(&state.pool, &drive_id).await?;
     Ok(())
+}
+
+// --- Add location as device ---
+
+#[tauri::command]
+pub async fn add_location(
+    state: State<'_, AppState>,
+    path: String,
+    label: String,
+    device_type: String,
+) -> Result<StorageDevice, AppError> {
+    let p = std::path::Path::new(&path);
+    if !p.exists() {
+        return Err(AppError::General(format!("Path does not exist: {}", path)));
+    }
+
+    let id = blake3::hash(path.as_bytes()).to_hex()[..16].to_string();
+
+    let disk = DetectedDisk {
+        id: id.clone(),
+        label,
+        mount_point: path,
+        total_bytes: 0,
+        available_bytes: 0,
+        is_removable: false,
+    };
+    db::upsert_device(&state.pool, &disk).await?;
+    db::set_device_type(&state.pool, &id, &device_type).await?;
+
+    let devices = db::get_all_devices(&state.pool).await?;
+    devices
+        .into_iter()
+        .find(|d| d.id == id)
+        .ok_or_else(|| AppError::General("Failed to retrieve added device".into()))
 }
 
 #[tauri::command]

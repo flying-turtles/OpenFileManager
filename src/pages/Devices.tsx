@@ -1,10 +1,9 @@
 import { useState } from "react";
 import type { StorageDevice } from "../types";
 import { useDevices } from "../hooks/useDevices";
-import { useNetworkDrives } from "../hooks/useNetworkDrives";
 import { DeviceCard } from "../components/DeviceCard";
-import { NetworkDriveCard } from "../components/NetworkDriveCard";
-import { AddNetworkDriveModal } from "../components/AddNetworkDriveModal";
+import { AddLocationModal } from "../components/AddLocationModal";
+import { addLocation } from "../api/commands";
 
 interface Props {
   onScanDevice: (device: StorageDevice) => void;
@@ -19,8 +18,12 @@ const SECTIONS = [
 
 export function Devices({ onScanDevice }: Props) {
   const { devices, loading, refresh, setType, remove } = useDevices();
-  const network = useNetworkDrives();
   const [showAddModal, setShowAddModal] = useState(false);
+
+  const handleAdd = async (path: string, label: string, deviceType: string) => {
+    await addLocation(path, label, deviceType);
+    refresh();
+  };
 
   const grouped = new Map<string, StorageDevice[]>();
   for (const section of SECTIONS) grouped.set(section.key, []);
@@ -34,29 +37,12 @@ export function Devices({ onScanDevice }: Props) {
       <div className="page-header">
         <h1>Devices</h1>
         <div style={{ display: "flex", gap: 8 }}>
-          <button onClick={() => setShowAddModal(true)}>Add Network Drive</button>
-          <button onClick={() => { refresh(); network.refresh(); }} disabled={loading}>
+          <button onClick={() => setShowAddModal(true)}>Add Location</button>
+          <button onClick={() => refresh()} disabled={loading}>
             {loading ? "Refreshing..." : "Refresh"}
           </button>
         </div>
       </div>
-
-      {network.drives.length > 0 && (
-        <>
-          <h2 style={{ fontSize: 16, marginBottom: 12, color: "var(--text-muted)" }}>Network Drives</h2>
-          <div className="device-grid" style={{ marginBottom: 24 }}>
-            {network.drives.map((d) => (
-              <NetworkDriveCard
-                key={d.id}
-                drive={d}
-                onMount={network.mount}
-                onUnmount={network.unmount}
-                onRemove={network.remove}
-              />
-            ))}
-          </div>
-        </>
-      )}
 
       {SECTIONS.map(({ key, label }) => {
         const sectionDevices = grouped.get(key)!;
@@ -78,8 +64,8 @@ export function Devices({ onScanDevice }: Props) {
       )}
 
       {showAddModal && (
-        <AddNetworkDriveModal
-          onAdd={network.add}
+        <AddLocationModal
+          onAdd={handleAdd}
           onClose={() => setShowAddModal(false)}
         />
       )}

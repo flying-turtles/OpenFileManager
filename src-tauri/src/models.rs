@@ -81,6 +81,7 @@ pub struct DirEntry {
 pub enum ScanEvent {
     Started { total_files: u64 },
     Progress { scanned: u64, total: u64 },
+    HashingStarted { to_hash: u64, skipped: u64 },
     FileHashed { path: String, hash: String },
     Finished { scanned: u64, hashed: u64, added: u64, removed: u64 },
     Error { message: String },
@@ -164,6 +165,20 @@ pub struct ProjectDetail {
     pub project: Project,
     pub stats: ProjectStats,
     pub files: Vec<FileSafety>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FilePageResult {
+    pub files: Vec<FileLocation>,
+    pub next_cursor: Option<String>,
+    pub total: i64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UnsafeFilePageResult {
+    pub files: Vec<FileSafety>,
+    pub total: i64,
+    pub has_more: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, FromRow)]

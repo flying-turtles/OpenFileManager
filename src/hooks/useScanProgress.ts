@@ -7,6 +7,8 @@ export interface ScanState {
   paused: boolean;
   total: number;
   scanned: number;
+  toHash: number;
+  skipped: number;
   hashed: number;
   added: number;
   removed: number;
@@ -20,6 +22,8 @@ const initialState: ScanState = {
   paused: false,
   total: 0,
   scanned: 0,
+  toHash: 0,
+  skipped: 0,
   hashed: 0,
   added: 0,
   removed: 0,
@@ -32,7 +36,7 @@ export function useScanProgress() {
   const [state, setState] = useState<ScanState>(initialState);
   const scanningRef = useRef(false);
 
-  const scan = useCallback(async (target: string, mode: string) => {
+  const scan = useCallback(async (target: string) => {
     setState({ ...initialState, scanning: true });
     scanningRef.current = true;
 
@@ -57,6 +61,8 @@ export function useScanProgress() {
       }
       if (typeof event === "object" && "Started" in event) {
         setState((s) => ({ ...s, total: event.Started.total_files }));
+      } else if (typeof event === "object" && "HashingStarted" in event) {
+        setState((s) => ({ ...s, toHash: event.HashingStarted.to_hash, skipped: event.HashingStarted.skipped }));
       } else if (typeof event === "object" && "Progress" in event) {
         setState((s) => ({
           ...s,
@@ -86,7 +92,7 @@ export function useScanProgress() {
     };
 
     try {
-      await startScan(target, mode, onEvent);
+      await startScan(target, onEvent);
     } catch (e) {
       setState((s) => ({
         ...s,

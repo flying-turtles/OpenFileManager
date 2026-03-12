@@ -5,29 +5,40 @@ import { FileTable } from "../components/FileTable";
 
 export function FileBrowser() {
   const { devices } = useDevices();
-  const { files, unsafeFiles, loading, loadDeviceFiles, loadUnsafeFiles, loadFileSafety } =
-    useFiles();
+  const {
+    files, unsafeFiles, safeFiles, loading, totalCount,
+    loadDeviceFiles, loadUnsafeFiles, loadSafeFiles, loadFileSafety,
+  } = useFiles();
   const [selectedDevice, setSelectedDevice] = useState("");
-  const [filter, setFilter] = useState<"all" | "unsafe">("all");
+  const [filter, setFilter] = useState<"all" | "unsafe" | "safe">("all");
 
   useEffect(() => {
     if (filter === "unsafe") {
       loadUnsafeFiles();
+    } else if (filter === "safe") {
+      loadSafeFiles();
     } else if (selectedDevice) {
       loadDeviceFiles(selectedDevice);
     }
-  }, [selectedDevice, filter, loadDeviceFiles, loadUnsafeFiles]);
+  }, [selectedDevice, filter, loadDeviceFiles, loadUnsafeFiles, loadSafeFiles]);
 
-  // Build a flat file list from unsafe files for display
   const displayFiles =
     filter === "unsafe"
       ? unsafeFiles.flatMap((sf) =>
-          sf.locations.map((loc) => ({
-            ...loc,
-            _safety: sf,
-          }))
+          sf.locations.map((loc) => ({ ...loc, _safety: sf }))
         )
-      : files;
+      : filter === "safe"
+        ? safeFiles.flatMap((sf) =>
+            sf.locations.map((loc) => ({ ...loc, _safety: sf }))
+          )
+        : files;
+
+  const emptyMsg =
+    filter === "unsafe"
+      ? "No unsafe files found"
+      : filter === "safe"
+        ? "No safe files found"
+        : "Select a device to view files";
 
   return (
     <div className="page">
@@ -39,6 +50,12 @@ export function FileBrowser() {
             onClick={() => setFilter("all")}
           >
             By Device
+          </button>
+          <button
+            className={filter === "safe" ? "active" : ""}
+            onClick={() => setFilter("safe")}
+          >
+            Safe Only
           </button>
           <button
             className={filter === "unsafe" ? "active" : ""}
@@ -65,13 +82,11 @@ export function FileBrowser() {
       {loading ? (
         <div>Loading...</div>
       ) : (
-        <FileTable files={displayFiles} onGetSafety={loadFileSafety} />
+        <FileTable files={displayFiles} totalCount={totalCount} onGetSafety={loadFileSafety} />
       )}
 
       {!loading && displayFiles.length === 0 && (
-        <p className="empty">
-          {filter === "unsafe" ? "No unsafe files found" : "Select a device to view files"}
-        </p>
+        <p className="empty">{emptyMsg}</p>
       )}
     </div>
   );

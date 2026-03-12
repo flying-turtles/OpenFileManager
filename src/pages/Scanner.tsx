@@ -12,7 +12,6 @@ interface Props {
 
 export function Scanner({ initialDevice }: Props) {
   const [target, setTarget] = useState(initialDevice?.mount_point || "");
-  const [mode, setMode] = useState<"quick" | "full">("quick");
   const [dragOver, setDragOver] = useState(false);
   const [pendingScans, setPendingScans] = useState<PendingScan[]>([]);
   const progress = useScanProgress();
@@ -29,13 +28,12 @@ export function Scanner({ initialDevice }: Props) {
 
   const handleStart = () => {
     if (!target) return;
-    progress.scan(target, mode);
+    progress.scan(target);
   };
 
   const handleResume = (ps: PendingScan) => {
     setTarget(ps.target);
-    setMode(ps.mode as "quick" | "full");
-    progress.scan(ps.target, ps.mode);
+    progress.scan(ps.target);
   };
 
   const handleDismiss = async (ps: PendingScan) => {
@@ -106,7 +104,7 @@ export function Scanner({ initialDevice }: Props) {
               <div className="pending-scan-info">
                 <span className="pending-scan-target">{ps.target}</span>
                 <span className="pending-scan-stats">
-                  {ps.processed} / {ps.total_files} scanned · {ps.hashed} hashed · {ps.mode}
+                  {ps.processed} / {ps.total_files} scanned · {ps.hashed} hashed
                 </span>
                 <span className="pending-scan-date">Paused {ps.paused_at}</span>
               </div>
@@ -141,25 +139,6 @@ export function Scanner({ initialDevice }: Props) {
           </div>
           {dragOver && <div className="drop-hint">Drop to set path</div>}
         </div>
-        <div className="form-group">
-          <label>Mode</label>
-          <div className="mode-toggle">
-            <button
-              className={mode === "quick" ? "active" : ""}
-              onClick={() => setMode("quick")}
-              disabled={isBusy}
-            >
-              Quick
-            </button>
-            <button
-              className={mode === "full" ? "active" : ""}
-              onClick={() => setMode("full")}
-              disabled={isBusy}
-            >
-              Full
-            </button>
-          </div>
-        </div>
         <div className="scan-actions">
           {!isBusy && !progress.paused ? (
             <button className="btn-primary" onClick={handleStart} disabled={!target}>
@@ -182,6 +161,8 @@ export function Scanner({ initialDevice }: Props) {
         <ProgressBar
           scanned={progress.scanned}
           total={progress.total}
+          toHash={progress.toHash}
+          skipped={progress.skipped}
           hashed={progress.hashed}
           lastFile={progress.lastFile}
         />
@@ -195,7 +176,7 @@ export function Scanner({ initialDevice }: Props) {
             Scan paused: {progress.scanned} scanned, {progress.hashed} hashed, {progress.added} added
           </span>
           <div className="scan-paused-actions">
-            <button className="btn-primary" onClick={handleStart}>
+            <button className="btn-primary" onClick={() => progress.scan(target)}>
               Resume
             </button>
             <button onClick={progress.reset}>Dismiss</button>

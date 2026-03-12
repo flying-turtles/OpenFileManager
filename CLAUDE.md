@@ -1,0 +1,1 @@
+Always create the dmg file after you updated the Application.

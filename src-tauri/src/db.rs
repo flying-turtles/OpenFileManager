@@ -37,6 +37,8 @@ pub async fn run_migrations(pool: &DbPool) -> Result<(), AppError> {
     sqlx::raw_sql(sql3).execute(pool).await?;
     let sql4 = include_str!("../migrations/004_pending_scans.sql");
     sqlx::raw_sql(sql4).execute(pool).await?;
+    let sql5 = include_str!("../migrations/005_quick_hash.sql");
+    let _ = sqlx::raw_sql(sql5).execute(pool).await;
     Ok(())
 }
 
@@ -252,6 +254,165 @@ pub async fn get_unsafe_files(pool: &DbPool) -> Result<Vec<FileSafety>, AppError
         });
     }
     Ok(results)
+}
+
+pub async fn get_files_on_device_page(
+    pool: &DbPool,
+    device_id: &str,
+    cursor: Option<&str>,
+    limit: i64,
+) -> Result<(Vec<FileLocation>, Option<String>, i64), AppError> {
+    let (total,): (i64,) = sqlx::query_as(
+        "SELECT COUNT(*) FROM file_locations WHERE device_id = ?"
+    )
+    .bind(device_id)
+    .fetch_one(pool)
+    .await?;
+
+    let rows = if let Some(cursor) = cursor {
+        sqlx::query_as::<_, FileLocation>(
+            "SELECT * FROM file_locations WHERE device_id = ? AND file_path > ? ORDER BY file_path LIMIT ?"
+        )
+        .bind(device_id)
+        .bind(cursor)
+        .bind(limit)
+        .fetch_all(pool)
+        .await?
+    } else {
+        sqlx::query_as::<_, FileLocation>(
+            "SELECT * FROM file_locations WHERE device_id = ? ORDER BY file_path LIMIT ?"
+        )
+        .bind(device_id)
+        .bind(limit)
+        .fetch_all(pool)
+        .await?
+    };
+
+    let next_cursor = if rows.len() as i64 == limit {
+        rows.last().map(|r| r.file_path.clone())
+    } else {
+        None
+    };
+
+    Ok((rows, next_cursor, total))
+}
+
+pub async fn get_unsafe_files_page(
+    pool: &DbPool,
+    offset: i64,
+    limit: i64,
+) -> Result<(Vec<FileSafety>, i64, bool), AppError> {
+    let (total,): (i64,) = sqlx::query_as(
+        "SELECT COUNT(*) FROM (
+            SELECT f.blake3_hash
+            FROM files f
+            JOIN file_locations fl ON f.blake3_hash = fl.blake3_hash
+            JOIN storage_devices d ON fl.device_id = d.id
+            GROUP BY f.blake3_hash
+            HAVING COALESCE(SUM(CASE WHEN d.device_type = 'cold' THEN 1 ELSE 0 END), 0) < 1
+                OR COUNT(fl.id) < 2
+        )"
+    )
+    .fetch_one(pool)
+    .await?;
+
+    let rows = sqlx::query_as::<_, (String, i64, String, i64, i64, i64)>(
+        "SELECT f.blake3_hash, f.file_size, f.representative_name,
+                COUNT(fl.id) as total_copies,
+                COALESCE(SUM(CASE WHEN d.device_type = 'hot' THEN 1 ELSE 0 END), 0) as hot_copies,
+                COALESCE(SUM(CASE WHEN d.device_type = 'cold' THEN 1 ELSE 0 END), 0) as cold_copies
+         FROM files f
+         JOIN file_locations fl ON f.blake3_hash = fl.blake3_hash
+         JOIN storage_devices d ON fl.device_id = d.id
+         GROUP BY f.blake3_hash
+         HAVING cold_copies < 1 OR total_copies < 2
+         ORDER BY f.file_size DESC
+         LIMIT ? OFFSET ?"
+    )
+    .bind(limit)
+    .bind(offset)
+    .fetch_all(pool)
+    .await?;
+
+    let hashes: Vec<String> = rows.iter().map(|(h, ..)| h.clone()).collect();
+    let locations_map = get_locations_for_hashes(pool, &hashes).await?;
+
+    let mut results = Vec::new();
+    for (blake3_hash, file_size, representative_name, total_copies, hot_copies, cold_copies) in rows {
+        let locations = locations_map.get(&blake3_hash).cloned().unwrap_or_default();
+        results.push(FileSafety {
+            blake3_hash,
+            file_size,
+            representative_name,
+            total_copies,
+            hot_copies,
+            cold_copies,
+            is_safe: false,
+            locations,
+        });
+    }
+
+    let has_more = (offset + limit) < total;
+    Ok((results, total, has_more))
+}
+
+pub async fn get_safe_files_page(
+    pool: &DbPool,
+    offset: i64,
+    limit: i64,
+) -> Result<(Vec<FileSafety>, i64, bool), AppError> {
+    let (total,): (i64,) = sqlx::query_as(
+        "SELECT COUNT(*) FROM (
+            SELECT f.blake3_hash
+            FROM files f
+            JOIN file_locations fl ON f.blake3_hash = fl.blake3_hash
+            JOIN storage_devices d ON fl.device_id = d.id
+            GROUP BY f.blake3_hash
+            HAVING COALESCE(SUM(CASE WHEN d.device_type = 'cold' THEN 1 ELSE 0 END), 0) >= 1
+                AND COUNT(fl.id) >= 2
+        )"
+    )
+    .fetch_one(pool)
+    .await?;
+
+    let rows = sqlx::query_as::<_, (String, i64, String, i64, i64, i64)>(
+        "SELECT f.blake3_hash, f.file_size, f.representative_name,
+                COUNT(fl.id) as total_copies,
+                COALESCE(SUM(CASE WHEN d.device_type = 'hot' THEN 1 ELSE 0 END), 0) as hot_copies,
+                COALESCE(SUM(CASE WHEN d.device_type = 'cold' THEN 1 ELSE 0 END), 0) as cold_copies
+         FROM files f
+         JOIN file_locations fl ON f.blake3_hash = fl.blake3_hash
+         JOIN storage_devices d ON fl.device_id = d.id
+         GROUP BY f.blake3_hash
+         HAVING cold_copies >= 1 AND total_copies >= 2
+         ORDER BY f.file_size DESC
+         LIMIT ? OFFSET ?"
+    )
+    .bind(limit)
+    .bind(offset)
+    .fetch_all(pool)
+    .await?;
+
+    let hashes: Vec<String> = rows.iter().map(|(h, ..)| h.clone()).collect();
+    let locations_map = get_locations_for_hashes(pool, &hashes).await?;
+
+    let mut results = Vec::new();
+    for (blake3_hash, file_size, representative_name, total_copies, hot_copies, cold_copies) in rows {
+        let locations = locations_map.get(&blake3_hash).cloned().unwrap_or_default();
+        results.push(FileSafety {
+            blake3_hash,
+            file_size,
+            representative_name,
+            total_copies,
+            hot_copies,
+            cold_copies,
+            is_safe: true,
+            locations,
+        });
+    }
+
+    let has_more = (offset + limit) < total;
+    Ok((results, total, has_more))
 }
 
 pub async fn get_waste_candidates(pool: &DbPool, threshold: i64) -> Result<Vec<WasteCandidate>, AppError> {

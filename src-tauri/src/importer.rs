@@ -85,7 +85,7 @@ pub async fn analyze_sd_card(
             .to_string_lossy()
             .to_string();
 
-        let blake3_hash = match hasher::hash_file(file_path).await {
+        let blake3_hash = match hasher::hash_file_partial(file_path, 4 * 1024 * 1024).await {
             Ok(h) => h,
             Err(e) => {
                 let _ = channel.send(ImportEvent::Error {

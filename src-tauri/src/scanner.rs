@@ -14,7 +14,7 @@ use crate::error::AppError;
 use crate::hasher;
 use crate::models::ScanEvent;
 
-const QUICK_HASH_THRESHOLD: u64 = 2 * 1024 * 1024 * 1024; // 2 GB
+const PARTIAL_HASH_BYTES: u64 = 4 * 1024 * 1024; // 4 MB
 
 struct FileWorkItem {
     path: PathBuf,
@@ -55,7 +55,6 @@ impl ScanProgress {
 pub async fn run_scan(
     pool: DbPool,
     target: PathBuf,
-    mode: String, // "quick" or "full"
     channel: Channel<ScanEvent>,
     cancel_token: CancellationToken,
     progress: Arc<ScanProgress>,
@@ -77,8 +76,6 @@ pub async fn run_scan(
     let total = files.len() as u64;
     progress.total.store(total, Ordering::Relaxed);
     let _ = channel.send(ScanEvent::Started { total_files: total });
-
-    let is_quick = mode == "quick";
 
     // Batch-fetch existing locations for this scan prefix
     let scan_prefix = target
@@ -157,76 +154,46 @@ pub async fn run_scan(
         let existing = existing_locations.get(&relative_path);
         let is_new = existing.is_none();
 
-        // Quick mode: skip if size+mtime match existing record
-        if is_quick {
-            if let Some(ex) = existing {
-                let size_matches = ex.file_size == file_size;
-                let mtime_matches = ex.modified_at.as_deref() == modified_at.as_deref();
-                if size_matches && mtime_matches {
-                    continue;
-                }
+        // Skip unchanged files already hashed
+        if let Some(ex) = existing {
+            let size_matches = ex.file_size == file_size;
+            let mtime_matches = ex.modified_at.as_deref() == modified_at.as_deref();
+            if size_matches && mtime_matches && !ex.blake3_hash.starts_with("deferred:") {
+                continue;
             }
         }
 
-        // Determine if we should hash or defer
-        let should_hash = if is_quick {
-            (file_size as u64) <= QUICK_HASH_THRESHOLD
-        } else {
-            true
-        };
-
-        if should_hash {
-            to_hash.push(FileWorkItem {
-                path: file_path.clone(),
-                relative_path,
-                file_name,
-                extension,
-                file_size,
-                modified_at,
-                is_new,
-            });
-        } else {
-            // Deferred: store with a placeholder hash based on metadata
-            let placeholder = format!(
-                "deferred:{}:{}",
-                file_size,
-                modified_at.as_deref().unwrap_or("")
-            );
-            db::upsert_file(&pool, &placeholder, file_size, &file_name, &extension).await?;
-            db::upsert_location(
-                &pool,
-                &placeholder,
-                &device_id,
-                &relative_path,
-                &file_name,
-                file_size,
-                modified_at.as_deref(),
-                "deferred",
-            )
-            .await?;
-            if is_new {
-                added += 1;
-                progress.added.store(added, Ordering::Relaxed);
-            }
-        }
+        to_hash.push(FileWorkItem {
+            path: file_path.clone(),
+            relative_path,
+            file_name,
+            extension,
+            file_size,
+            modified_at,
+            is_new,
+        });
     }
 
-    // === Phase 2: parallel hashing ===
+    // === Phase 2: hash files ===
+    let to_hash_total = to_hash.len() as u64;
+    let skipped = total - to_hash_total;
+    let _ = channel.send(ScanEvent::HashingStarted { to_hash: to_hash_total, skipped });
+
     let parallelism = std::thread::available_parallelism()
         .map(|n| n.get())
         .unwrap_or(4);
 
     let mut hashed: u64 = 0;
 
-    let cancel_token_stream = cancel_token.clone();
+    let cancel_token_h = cancel_token.clone();
     let mut hash_stream = stream::iter(to_hash)
-        .map(|item| {
-            let token = cancel_token_stream.clone();
+        .map(move |item| {
+            let token = cancel_token_h.clone();
             tokio::task::spawn_blocking(move || {
                 if token.is_cancelled() {
                     return Err(AppError::General("cancelled".into()));
                 }
-                let hash = hasher::hash_file_sync(&item.path)?;
+                let hash = hasher::hash_file_partial_sync(&item.path, PARTIAL_HASH_BYTES)?;
                 Ok(HashResult { item, hash })
             })
         })
@@ -257,7 +224,7 @@ pub async fn run_scan(
                     &item.file_name,
                     item.file_size,
                     item.modified_at.as_deref(),
-                    &mode,
+                    "quick",
                 )
                 .await?;
                 hashed += 1;
