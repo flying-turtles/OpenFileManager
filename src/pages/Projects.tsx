@@ -1,8 +1,9 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, useMemo } from "react";
 import { useProjects } from "../hooks/useProjects";
+import { useDevices } from "../hooks/useDevices";
 import { FileTable } from "../components/FileTable";
-import { getFileSafety } from "../api/commands";
-import type { Project } from "../types";
+import { getFileSafety, deleteFileCopy } from "../api/commands";
+import type { Project, FileLocation, FileSafety } from "../types";
 
 function formatBytes(bytes: number): string {
   if (bytes === 0) return "0 B";
@@ -13,10 +14,28 @@ function formatBytes(bytes: number): string {
 }
 
 type View = "list" | "detail" | "create" | "edit";
+type SafetyFilter = "all" | "safe" | "unsafe" | "duplicates";
+type SortKey = "name" | "size" | "modified";
+type SortDir = "asc" | "desc";
+
+function getExtension(f: FileLocation): string {
+  const dot = f.file_name.lastIndexOf(".");
+  return dot > 0 ? f.file_name.slice(dot + 1).toLowerCase() : "";
+}
+
+function sortFiles(files: FileLocation[], key: SortKey, dir: SortDir): FileLocation[] {
+  const sorted = [...files].sort((a, b) => {
+    if (key === "size") return a.file_size - b.file_size;
+    if (key === "modified") return (a.modified_at ?? "").localeCompare(b.modified_at ?? "");
+    return a.file_name.localeCompare(b.file_name);
+  });
+  return dir === "desc" ? sorted.reverse() : sorted;
+}
 
 export function Projects() {
   const { projects, selected, loading, refresh, select, create, update, remove, setSelected } =
     useProjects();
+  const { devices } = useDevices();
   const [view, setView] = useState<View>("list");
 
   const [title, setTitle] = useState("");
@@ -24,9 +43,39 @@ export function Projects() {
   const [startDate, setStartDate] = useState("");
   const [endDate, setEndDate] = useState("");
 
+  // Detail view filters
+  const [safetyFilter, setSafetyFilter] = useState<SafetyFilter>("all");
+  const [extFilter, setExtFilter] = useState("");
+  const [sortKey, setSortKey] = useState<SortKey>("name");
+  const [sortDir, setSortDir] = useState<SortDir>("asc");
+  const [projectFiles, setProjectFiles] = useState<FileSafety[]>([]);
+
   useEffect(() => {
     refresh();
   }, [refresh]);
+
+  const deviceNames = useMemo(() => {
+    const map: Record<string, string> = {};
+    for (const d of devices) map[d.id] = d.label;
+    return map;
+  }, [devices]);
+
+  // Sync projectFiles with selected project data
+  useEffect(() => {
+    if (selected) {
+      setProjectFiles(selected.files);
+    }
+  }, [selected]);
+
+  // Reset filters when opening a new project
+  const openDetail = async (id: number) => {
+    setSafetyFilter("all");
+    setExtFilter("");
+    setSortKey("name");
+    setSortDir("asc");
+    await select(id);
+    setView("detail");
+  };
 
   const openCreate = () => {
     setTitle("");
@@ -55,23 +104,69 @@ export function Projects() {
     setView("list");
   };
 
-  const openDetail = async (id: number) => {
-    await select(id);
-    setView("detail");
-  };
-
-  const handleDelete = async (id: number) => {
+  const handleDeleteProject = async (id: number) => {
     if (!confirm("Delete this project?")) return;
     await remove(id);
     setView("list");
   };
 
-  // Flatten FileSafety[] to FileLocation[] for FileTable
-  const detailFiles = selected
-    ? selected.files.flatMap((sf) =>
-        sf.locations.map((loc) => ({ ...loc, _safety: sf }))
-      )
-    : [];
+  const handleDeleteFileCopy = async (locationId: number) => {
+    await deleteFileCopy(locationId);
+    setProjectFiles((prev) =>
+      prev
+        .map((sf) => ({
+          ...sf,
+          total_copies: sf.total_copies - (sf.locations.some((l) => l.id === locationId) ? 1 : 0),
+          locations: sf.locations.filter((l) => l.id !== locationId),
+        }))
+        .filter((sf) => sf.locations.length > 0)
+    );
+  };
+
+  // Filter project files by safety status
+  const filteredSafetyFiles: FileSafety[] = useMemo(() => {
+    if (safetyFilter === "safe") return projectFiles.filter((sf) => sf.is_safe);
+    if (safetyFilter === "unsafe") return projectFiles.filter((sf) => !sf.is_safe);
+    if (safetyFilter === "duplicates") return projectFiles.filter((sf) => sf.total_copies > 2);
+    return projectFiles;
+  }, [projectFiles, safetyFilter]);
+
+  // One row per unique file (first location), not one per location
+  const rawFiles: FileLocation[] = useMemo(
+    () =>
+      filteredSafetyFiles
+        .filter((sf) => sf.locations.length > 0)
+        .map((sf) => ({ ...sf.locations[0], _safety: sf })),
+    [filteredSafetyFiles]
+  );
+
+  // Extension counts
+  const extensions = useMemo(() => {
+    const counts = new Map<string, number>();
+    for (const f of rawFiles) {
+      const ext = getExtension(f);
+      if (ext) counts.set(ext, (counts.get(ext) ?? 0) + 1);
+    }
+    return [...counts.entries()].sort((a, b) => b[1] - a[1]);
+  }, [rawFiles]);
+
+  // Apply ext filter + sort
+  const displayFiles = useMemo(() => {
+    let filtered = rawFiles;
+    if (extFilter) {
+      filtered = filtered.filter((f) => getExtension(f) === extFilter);
+    }
+    return sortFiles(filtered, sortKey, sortDir);
+  }, [rawFiles, extFilter, sortKey, sortDir]);
+
+  const toggleSort = (key: SortKey) => {
+    if (sortKey === key) {
+      setSortDir((d) => (d === "asc" ? "desc" : "asc"));
+    } else {
+      setSortKey(key);
+      setSortDir(key === "name" ? "asc" : "desc");
+    }
+  };
 
   if (view === "create" || view === "edit") {
     return (
@@ -137,7 +232,7 @@ export function Projects() {
           <div style={{ display: "flex", gap: 8 }}>
             <button onClick={() => { setSelected(null); setView("list"); }}>Back</button>
             <button onClick={() => openEdit(project)}>Edit</button>
-            <button className="btn-danger" onClick={() => handleDelete(project.id)}>Delete</button>
+            <button className="btn-danger" onClick={() => handleDeleteProject(project.id)}>Delete</button>
           </div>
         </div>
 
@@ -156,23 +251,76 @@ export function Projects() {
           </div>
         </div>
 
-        {stats.extensions.length > 0 && (
-          <div style={{ marginBottom: 20, display: "flex", flexWrap: "wrap", gap: 6 }}>
-            {stats.extensions.map((e) => (
-              <span key={e.extension} className="ext-chip">
-                {e.extension || "no ext"} ({e.count})
+        <div className="browser-controls">
+          <div className="filter-toggle">
+            <button className={safetyFilter === "all" ? "active" : ""} onClick={() => { setSafetyFilter("all"); setExtFilter(""); }}>
+              All
+            </button>
+            <button className={safetyFilter === "safe" ? "active" : ""} onClick={() => { setSafetyFilter("safe"); setExtFilter(""); }}>
+              Safe Only
+            </button>
+            <button className={safetyFilter === "unsafe" ? "active" : ""} onClick={() => { setSafetyFilter("unsafe"); setExtFilter(""); }}>
+              Unsafe Only
+            </button>
+            <button className={safetyFilter === "duplicates" ? "active" : ""} onClick={() => { setSafetyFilter("duplicates"); setExtFilter(""); }}>
+              Duplicates
+            </button>
+          </div>
+        </div>
+
+        {rawFiles.length > 0 && (
+          <div className="browser-controls" style={{ marginTop: 0 }}>
+            <select
+              value={extFilter}
+              onChange={(e) => setExtFilter(e.target.value)}
+              style={{ minWidth: 160 }}
+            >
+              <option value="">All types</option>
+              {extensions.map(([ext, count]) => (
+                <option key={ext} value={ext}>
+                  .{ext} ({count.toLocaleString()})
+                </option>
+              ))}
+            </select>
+            <div className="filter-toggle">
+              <button className={sortKey === "name" ? "active" : ""} onClick={() => toggleSort("name")}>
+                Name {sortKey === "name" ? (sortDir === "asc" ? "\u2191" : "\u2193") : ""}
+              </button>
+              <button className={sortKey === "size" ? "active" : ""} onClick={() => toggleSort("size")}>
+                Size {sortKey === "size" ? (sortDir === "asc" ? "\u2191" : "\u2193") : ""}
+              </button>
+              <button className={sortKey === "modified" ? "active" : ""} onClick={() => toggleSort("modified")}>
+                Date {sortKey === "modified" ? (sortDir === "asc" ? "\u2191" : "\u2193") : ""}
+              </button>
+            </div>
+            {extFilter && (
+              <span className="file-table-status">
+                {displayFiles.length.toLocaleString()} .{extFilter} files
               </span>
-            ))}
+            )}
           </div>
         )}
 
         {loading ? (
           <div>Loading...</div>
         ) : (
-          <FileTable files={detailFiles} onGetSafety={(hash) => getFileSafety(hash)} />
+          <FileTable
+            files={displayFiles}
+            deviceNames={deviceNames}
+            onGetSafety={(hash) => getFileSafety(hash)}
+            onDeleteLocation={safetyFilter === "duplicates" ? handleDeleteFileCopy : undefined}
+          />
         )}
-        {!loading && detailFiles.length === 0 && (
-          <p className="empty">No files match this date range</p>
+        {!loading && displayFiles.length === 0 && (
+          <p className="empty">
+            {safetyFilter === "all"
+              ? "No files match this date range"
+              : safetyFilter === "safe"
+                ? "No safe files"
+                : safetyFilter === "unsafe"
+                  ? "No unsafe files"
+                  : "No files with more than 2 copies"}
+          </p>
         )}
       </div>
     );

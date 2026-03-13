@@ -35,6 +35,12 @@ export function FileBrowser() {
   const [sortKey, setSortKey] = useState<SortKey>("name");
   const [sortDir, setSortDir] = useState<SortDir>("asc");
 
+  const deviceNames = useMemo(() => {
+    const map: Record<string, string> = {};
+    for (const d of devices) map[d.id] = d.label;
+    return map;
+  }, [devices]);
+
   useEffect(() => {
     if (filter === "unsafe") {
       loadUnsafeFiles();
@@ -52,19 +58,11 @@ export function FileBrowser() {
   }, [filter, selectedDevice]);
 
   const rawFiles: FileLocation[] =
-    filter === "unsafe"
-      ? unsafeFiles.flatMap((sf) =>
-          sf.locations.map((loc) => ({ ...loc, _safety: sf }))
-        )
-      : filter === "safe"
-        ? safeFiles.flatMap((sf) =>
-            sf.locations.map((loc) => ({ ...loc, _safety: sf }))
-          )
-        : filter === "duplicates"
-          ? duplicateFiles.flatMap((sf) =>
-              sf.locations.map((loc) => ({ ...loc, _safety: sf }))
-            )
-          : files;
+    filter === "all"
+      ? files
+      : (filter === "unsafe" ? unsafeFiles : filter === "safe" ? safeFiles : duplicateFiles)
+          .filter((sf) => sf.locations.length > 0)
+          .map((sf) => ({ ...sf.locations[0], _safety: sf }));
 
   const extensions = useMemo(() => {
     const counts = new Map<string, number>();
@@ -194,6 +192,7 @@ export function FileBrowser() {
         <FileTable
           files={displayFiles}
           totalCount={extFilter ? undefined : totalCount}
+          deviceNames={deviceNames}
           onGetSafety={loadFileSafety}
           onDeleteLocation={filter === "duplicates" ? deleteFileCopy : undefined}
         />

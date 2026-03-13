@@ -921,6 +921,7 @@ pub async fn purge_dotfiles(pool: &DbPool) -> Result<u64, AppError> {
     Ok(removed)
 }
 
+
 pub async fn get_dashboard_stats(pool: &DbPool) -> Result<DashboardStats, AppError> {
     let total_files: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM files")
         .fetch_one(pool)

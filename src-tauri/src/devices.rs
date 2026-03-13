@@ -1,9 +1,12 @@
 use std::collections::HashSet;
+use std::path::Path;
 use std::process::Command;
 
 use sysinfo::Disks;
 
 use crate::models::DetectedDisk;
+
+pub const FILEMANAGER_ID_FILE: &str = ".filemanagerid";
 
 const EXCLUDED_MOUNT_PREFIXES: &[&str] = &[
     "/System",
@@ -53,6 +56,31 @@ fn is_excluded(mount_point: &str) -> bool {
     false
 }
 
+/// Walk up from `path` looking for a `.filemanagerid` file.
+/// Returns (device_id, directory_containing_the_id_file).
+pub fn read_filemanager_id(path: &str) -> Option<(String, String)> {
+    let mut dir = Path::new(path);
+    // If path points to a file, start from its parent
+    if dir.is_file() {
+        dir = dir.parent()?;
+    }
+    loop {
+        let id_file = dir.join(FILEMANAGER_ID_FILE);
+        if id_file.is_file() {
+            let contents = std::fs::read_to_string(&id_file).ok()?;
+            let id = contents.trim().to_string();
+            if !id.is_empty() {
+                return Some((id, dir.to_string_lossy().to_string()));
+            }
+        }
+        match dir.parent() {
+            Some(parent) if parent != dir => dir = parent,
+            _ => break,
+        }
+    }
+    None
+}
+
 pub fn detect_volumes() -> Vec<DetectedDisk> {
     let disks = Disks::new_with_refreshed_list();
     let mut result = Vec::new();
@@ -89,8 +117,14 @@ pub fn detect_volumes() -> Vec<DetectedDisk> {
     result
 }
 
-/// Returns the device ID for a given path by finding which mount point contains it
+/// Returns the device ID for a given path.
+/// First checks for a `.filemanagerid` file, then falls back to detected volumes.
 pub fn device_for_path(devices: &[DetectedDisk], path: &str) -> Option<(String, String)> {
+    // Check for .filemanagerid first
+    if let Some(result) = read_filemanager_id(path) {
+        return Some(result);
+    }
+
     let mut best_match: Option<(&DetectedDisk, usize)> = None;
     for dev in devices {
         if path.starts_with(&dev.mount_point) {
@@ -102,3 +136,4 @@ pub fn device_for_path(devices: &[DetectedDisk], path: &str) -> Option<(String, 
     }
     best_match.map(|(dev, _)| (dev.id.clone(), dev.mount_point.clone()))
 }
+

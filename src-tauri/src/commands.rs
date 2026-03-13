@@ -549,12 +549,29 @@ pub async fn add_location(
         return Err(AppError::General(format!("Path does not exist: {}", path)));
     }
 
-    let id = blake3::hash(path.as_bytes()).to_hex()[..16].to_string();
+    // Reuse existing .filemanagerid if present, otherwise generate a new UUID
+    let id_file = p.join(devices::FILEMANAGER_ID_FILE);
+    let id = if id_file.is_file() {
+        let contents = std::fs::read_to_string(&id_file)
+            .map_err(|e| AppError::General(format!("Failed to read {}: {}", id_file.display(), e)))?;
+        let existing = contents.trim().to_string();
+        if existing.is_empty() {
+            uuid::Uuid::new_v4().to_string()
+        } else {
+            existing
+        }
+    } else {
+        uuid::Uuid::new_v4().to_string()
+    };
+
+    // Write the .filemanagerid file
+    std::fs::write(&id_file, &id)
+        .map_err(|e| AppError::General(format!("Failed to write {}: {}", id_file.display(), e)))?;
 
     let disk = DetectedDisk {
         id: id.clone(),
         label,
-        mount_point: path,
+        mount_point: path.clone(),
         total_bytes: 0,
         available_bytes: 0,
         is_removable: false,

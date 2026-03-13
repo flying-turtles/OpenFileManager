@@ -18,11 +18,12 @@ type RowItem =
 interface Props {
   files: FileLocation[];
   totalCount?: number;
+  deviceNames?: Record<string, string>;
   onGetSafety?: (hash: string) => Promise<FileSafety | null>;
   onDeleteLocation?: (locationId: number, filePath: string) => Promise<void>;
 }
 
-export function FileTable({ files, totalCount, onGetSafety, onDeleteLocation }: Props) {
+export function FileTable({ files, totalCount, deviceNames, onGetSafety, onDeleteLocation }: Props) {
   const [expanded, setExpanded] = useState<string | null>(null);
   const [safety, setSafety] = useState<FileSafety | null>(null);
   const [confirmDelete, setConfirmDelete] = useState<{ id: number; path: string } | null>(null);
@@ -148,7 +149,7 @@ export function FileTable({ files, totalCount, onGetSafety, onDeleteLocation }: 
                           {row.safety.locations.map((loc) => (
                             <div key={loc.id} className="location-item location-item-row">
                               <span className="location-item-path">
-                                [{loc.device_id.slice(0, 8)}] {loc.file_path}
+                                [{deviceNames?.[loc.device_id] ?? loc.device_id.slice(0, 8)}] {loc.file_path}
                               </span>
                               {onDeleteLocation && (
                                 <button

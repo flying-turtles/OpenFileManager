@@ -9,7 +9,7 @@ use tokio_util::sync::CancellationToken;
 use walkdir::WalkDir;
 
 use crate::db::{self, DbPool};
-use crate::devices::{detect_volumes, device_for_path};
+use crate::devices::{detect_volumes, device_for_path, FILEMANAGER_ID_FILE};
 use crate::error::AppError;
 use crate::hasher;
 use crate::models::ScanEvent;
@@ -74,6 +74,7 @@ pub async fn run_scan(
         })
         .filter_map(|e| e.ok())
         .filter(|e| e.file_type().is_file())
+        .filter(|e| e.file_name().to_string_lossy() != FILEMANAGER_ID_FILE)
         .map(|e| e.into_path())
         .collect();
 
