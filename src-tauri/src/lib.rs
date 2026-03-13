@@ -70,6 +70,8 @@ pub fn run() {
             commands::get_unsafe_files,
             commands::get_unsafe_files_page,
             commands::get_safe_files_page,
+            commands::get_duplicate_files_page,
+            commands::delete_file_copy,
             commands::get_waste_candidates,
             commands::browse_directory,
             commands::get_file_locations,

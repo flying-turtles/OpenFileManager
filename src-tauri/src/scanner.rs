@@ -68,6 +68,10 @@ pub async fn run_scan(
     // Enumerate files first
     let files: Vec<PathBuf> = WalkDir::new(&target)
         .into_iter()
+        .filter_entry(|e| {
+            !e.file_name().to_string_lossy().starts_with('.')
+                || e.path() == target.as_path()
+        })
         .filter_map(|e| e.ok())
         .filter(|e| e.file_type().is_file())
         .map(|e| e.into_path())

@@ -206,6 +206,32 @@ pub async fn get_safe_files_page(
 }
 
 #[tauri::command]
+pub async fn get_duplicate_files_page(
+    state: State<'_, AppState>,
+    offset: Option<i64>,
+    limit: Option<i64>,
+) -> Result<UnsafeFilePageResult, AppError> {
+    let (files, total, has_more) =
+        db::get_duplicate_files_page(&state.pool, offset.unwrap_or(0), limit.unwrap_or(500)).await?;
+    Ok(UnsafeFilePageResult { files, total, has_more })
+}
+
+#[tauri::command]
+pub async fn delete_file_copy(
+    state: State<'_, AppState>,
+    location_id: i64,
+) -> Result<(), AppError> {
+    let file_path = db::delete_file_location(&state.pool, location_id).await?;
+
+    let path = std::path::Path::new(&file_path);
+    if path.exists() {
+        tokio::fs::remove_file(path).await?;
+    }
+
+    Ok(())
+}
+
+#[tauri::command]
 pub async fn get_file_safety(
     state: State<'_, AppState>,
     hash: String,

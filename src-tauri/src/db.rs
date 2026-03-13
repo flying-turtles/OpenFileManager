@@ -39,6 +39,8 @@ pub async fn run_migrations(pool: &DbPool) -> Result<(), AppError> {
     sqlx::raw_sql(sql4).execute(pool).await?;
     let sql5 = include_str!("../migrations/005_quick_hash.sql");
     let _ = sqlx::raw_sql(sql5).execute(pool).await;
+    // Purge any existing dotfiles from the database
+    let _ = purge_dotfiles(pool).await;
     Ok(())
 }
 
@@ -413,6 +415,85 @@ pub async fn get_safe_files_page(
 
     let has_more = (offset + limit) < total;
     Ok((results, total, has_more))
+}
+
+pub async fn get_duplicate_files_page(
+    pool: &DbPool,
+    offset: i64,
+    limit: i64,
+) -> Result<(Vec<FileSafety>, i64, bool), AppError> {
+    let (total,): (i64,) = sqlx::query_as(
+        "SELECT COUNT(*) FROM (
+            SELECT f.blake3_hash
+            FROM files f
+            JOIN file_locations fl ON f.blake3_hash = fl.blake3_hash
+            GROUP BY f.blake3_hash
+            HAVING COUNT(fl.id) > 2
+        )"
+    )
+    .fetch_one(pool)
+    .await?;
+
+    let rows = sqlx::query_as::<_, (String, i64, String, i64, i64, i64)>(
+        "SELECT f.blake3_hash, f.file_size, f.representative_name,
+                COUNT(fl.id) as total_copies,
+                COALESCE(SUM(CASE WHEN d.device_type = 'hot' THEN 1 ELSE 0 END), 0) as hot_copies,
+                COALESCE(SUM(CASE WHEN d.device_type = 'cold' THEN 1 ELSE 0 END), 0) as cold_copies
+         FROM files f
+         JOIN file_locations fl ON f.blake3_hash = fl.blake3_hash
+         LEFT JOIN storage_devices d ON fl.device_id = d.id
+         GROUP BY f.blake3_hash
+         HAVING COUNT(fl.id) > 2
+         ORDER BY f.file_size DESC
+         LIMIT ? OFFSET ?"
+    )
+    .bind(limit)
+    .bind(offset)
+    .fetch_all(pool)
+    .await?;
+
+    let hashes: Vec<String> = rows.iter().map(|(h, ..)| h.clone()).collect();
+    let locations_map = get_locations_for_hashes(pool, &hashes).await?;
+
+    let mut results = Vec::new();
+    for (blake3_hash, file_size, representative_name, total_copies, hot_copies, cold_copies) in rows {
+        let locations = locations_map.get(&blake3_hash).cloned().unwrap_or_default();
+        let is_safe = cold_copies >= 1 && total_copies >= 2;
+        results.push(FileSafety {
+            blake3_hash,
+            file_size,
+            representative_name,
+            total_copies,
+            hot_copies,
+            cold_copies,
+            is_safe,
+            locations,
+        });
+    }
+
+    let has_more = (offset + limit) < total;
+    Ok((results, total, has_more))
+}
+
+pub async fn delete_file_location(pool: &DbPool, location_id: i64) -> Result<String, AppError> {
+    let loc = sqlx::query_as::<_, FileLocation>(
+        "SELECT * FROM file_locations WHERE id = ?"
+    )
+    .bind(location_id)
+    .fetch_optional(pool)
+    .await?
+    .ok_or_else(|| AppError::General(format!("Location {} not found", location_id)))?;
+
+    let file_path = loc.file_path.clone();
+
+    sqlx::query("DELETE FROM file_locations WHERE id = ?")
+        .bind(location_id)
+        .execute(pool)
+        .await?;
+
+    cleanup_orphaned_files(pool).await?;
+
+    Ok(file_path)
 }
 
 pub async fn get_waste_candidates(pool: &DbPool, threshold: i64) -> Result<Vec<WasteCandidate>, AppError> {
@@ -825,6 +906,19 @@ pub async fn delete_pending_scan_by_target(pool: &DbPool, scan_type: &str, targe
         .execute(pool)
         .await?;
     Ok(())
+}
+
+pub async fn purge_dotfiles(pool: &DbPool) -> Result<u64, AppError> {
+    let res = sqlx::query(
+        "DELETE FROM file_locations WHERE file_name LIKE '.%'"
+    )
+    .execute(pool)
+    .await?;
+    let removed = res.rows_affected();
+    if removed > 0 {
+        cleanup_orphaned_files(pool).await?;
+    }
+    Ok(removed)
 }
 
 pub async fn get_dashboard_stats(pool: &DbPool) -> Result<DashboardStats, AppError> {

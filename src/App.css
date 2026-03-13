@@ -498,6 +498,35 @@ button:disabled {
   padding: 2px 0;
 }
 
+.location-item-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.location-item-path {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.btn-delete-copy {
+  flex-shrink: 0;
+  padding: 2px 8px;
+  font-size: 11px;
+  background: transparent;
+  border: 1px solid var(--danger);
+  color: var(--danger);
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+.btn-delete-copy:hover {
+  background: var(--danger);
+  color: white;
+}
+
 /* Badges */
 .badge {
   display: inline-block;

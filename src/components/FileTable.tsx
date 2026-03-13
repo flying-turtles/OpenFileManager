@@ -19,11 +19,14 @@ interface Props {
   files: FileLocation[];
   totalCount?: number;
   onGetSafety?: (hash: string) => Promise<FileSafety | null>;
+  onDeleteLocation?: (locationId: number, filePath: string) => Promise<void>;
 }
 
-export function FileTable({ files, totalCount, onGetSafety }: Props) {
+export function FileTable({ files, totalCount, onGetSafety, onDeleteLocation }: Props) {
   const [expanded, setExpanded] = useState<string | null>(null);
   const [safety, setSafety] = useState<FileSafety | null>(null);
+  const [confirmDelete, setConfirmDelete] = useState<{ id: number; path: string } | null>(null);
+  const [deleting, setDeleting] = useState(false);
   const parentRef = useRef<HTMLDivElement>(null);
 
   const toggleExpand = async (hash: string) => {
@@ -36,6 +39,31 @@ export function FileTable({ files, totalCount, onGetSafety }: Props) {
     if (onGetSafety) {
       const s = await onGetSafety(hash);
       setSafety(s);
+    }
+  };
+
+  const handleDelete = async () => {
+    if (!confirmDelete || !onDeleteLocation) return;
+    setDeleting(true);
+    try {
+      await onDeleteLocation(confirmDelete.id, confirmDelete.path);
+      // Update local safety state to reflect removal
+      if (safety) {
+        const updated = {
+          ...safety,
+          total_copies: safety.total_copies - 1,
+          locations: safety.locations.filter((l) => l.id !== confirmDelete.id),
+        };
+        if (updated.locations.length === 0) {
+          setExpanded(null);
+          setSafety(null);
+        } else {
+          setSafety(updated);
+        }
+      }
+    } finally {
+      setDeleting(false);
+      setConfirmDelete(null);
     }
   };
 
@@ -118,8 +146,21 @@ export function FileTable({ files, totalCount, onGetSafety }: Props) {
                         </span>
                         <div className="locations-list">
                           {row.safety.locations.map((loc) => (
-                            <div key={loc.id} className="location-item">
-                              [{loc.device_id.slice(0, 8)}] {loc.file_path}
+                            <div key={loc.id} className="location-item location-item-row">
+                              <span className="location-item-path">
+                                [{loc.device_id.slice(0, 8)}] {loc.file_path}
+                              </span>
+                              {onDeleteLocation && (
+                                <button
+                                  className="btn-delete-copy"
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    setConfirmDelete({ id: loc.id, path: loc.file_path });
+                                  }}
+                                >
+                                  Delete
+                                </button>
+                              )}
                             </div>
                           ))}
                         </div>
@@ -153,6 +194,28 @@ export function FileTable({ files, totalCount, onGetSafety }: Props) {
           </tbody>
         </table>
       </div>
+
+      {confirmDelete && (
+        <div className="modal-overlay" onClick={() => !deleting && setConfirmDelete(null)}>
+          <div className="modal-content" onClick={(e) => e.stopPropagation()}>
+            <h2>Delete file copy?</h2>
+            <p style={{ marginBottom: 12, wordBreak: "break-all", color: "var(--text-muted)", fontSize: 13 }}>
+              {confirmDelete.path}
+            </p>
+            <p style={{ marginBottom: 20, color: "var(--danger)", fontSize: 13 }}>
+              This will permanently delete the file from disk. Other copies will remain.
+            </p>
+            <div className="form-actions">
+              <button onClick={() => setConfirmDelete(null)} disabled={deleting}>
+                Cancel
+              </button>
+              <button className="btn-danger" onClick={handleDelete} disabled={deleting}>
+                {deleting ? "Deleting..." : "Delete"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

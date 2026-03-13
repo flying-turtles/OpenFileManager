@@ -91,6 +91,17 @@ export async function getSafeFilesPage(
   return invoke("get_safe_files_page", { offset, limit });
 }
 
+export async function getDuplicateFilesPage(
+  offset?: number,
+  limit?: number
+): Promise<UnsafeFilePageResult> {
+  return invoke("get_duplicate_files_page", { offset, limit });
+}
+
+export async function deleteFileCopy(locationId: number): Promise<void> {
+  return invoke("delete_file_copy", { locationId });
+}
+
 export async function getFileSafety(
   hash: string
 ): Promise<FileSafety | null> {
