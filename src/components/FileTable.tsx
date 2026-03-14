@@ -24,21 +24,21 @@ interface Props {
 }
 
 export function FileTable({ files, totalCount, deviceNames, onGetSafety, onDeleteLocation }: Props) {
-  const [expanded, setExpanded] = useState<string | null>(null);
+  const [expandedId, setExpandedId] = useState<number | null>(null);
   const [safety, setSafety] = useState<FileSafety | null>(null);
   const [confirmDelete, setConfirmDelete] = useState<{ id: number; path: string } | null>(null);
   const [deleting, setDeleting] = useState(false);
   const parentRef = useRef<HTMLDivElement>(null);
 
-  const toggleExpand = async (hash: string) => {
-    if (expanded === hash) {
-      setExpanded(null);
+  const toggleExpand = async (file: FileLocation) => {
+    if (expandedId === file.id) {
+      setExpandedId(null);
       setSafety(null);
       return;
     }
-    setExpanded(hash);
+    setExpandedId(file.id);
     if (onGetSafety) {
-      const s = await onGetSafety(hash);
+      const s = await onGetSafety(file.blake3_hash);
       setSafety(s);
     }
   };
@@ -56,7 +56,7 @@ export function FileTable({ files, totalCount, deviceNames, onGetSafety, onDelet
           locations: safety.locations.filter((l) => l.id !== confirmDelete.id),
         };
         if (updated.locations.length === 0) {
-          setExpanded(null);
+          setExpandedId(null);
           setSafety(null);
         } else {
           setSafety(updated);
@@ -72,12 +72,12 @@ export function FileTable({ files, totalCount, deviceNames, onGetSafety, onDelet
     const result: RowItem[] = [];
     for (const f of files) {
       result.push({ type: "file", file: f });
-      if (expanded === f.blake3_hash && safety) {
+      if (expandedId === f.id && safety) {
         result.push({ type: "detail", file: f, safety });
       }
     }
     return result;
-  }, [files, expanded, safety]);
+  }, [files, expandedId, safety]);
 
   const virtualizer = useVirtualizer({
     count: rows.length,
@@ -174,9 +174,9 @@ export function FileTable({ files, totalCount, deviceNames, onGetSafety, onDelet
                 <tr
                   key={row.file.id}
                   className={
-                    expanded === row.file.blake3_hash ? "expanded" : ""
+                    expandedId === row.file.id ? "expanded" : ""
                   }
-                  onClick={() => toggleExpand(row.file.blake3_hash)}
+                  onClick={() => toggleExpand(row.file)}
                   style={{ cursor: "pointer" }}
                 >
                   <td>{row.file.file_name}</td>
