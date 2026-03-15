@@ -50,6 +50,7 @@ export function Projects() {
   const [sortKey, setSortKey] = useState<SortKey>("name");
   const [sortDir, setSortDir] = useState<SortDir>("asc");
   const [projectFiles, setProjectFiles] = useState<FileSafety[]>([]);
+  const [dupDeviceFilter, setDupDeviceFilter] = useState("");
 
   useEffect(() => {
     refresh();
@@ -77,6 +78,7 @@ export function Projects() {
   const openDetail = async (id: number) => {
     setSafetyFilter("all");
     setExtFilter("");
+    setDupDeviceFilter("");
     setSortKey("name");
     setSortDir("asc");
     await select(id);
@@ -133,9 +135,15 @@ export function Projects() {
   const filteredSafetyFiles: FileSafety[] = useMemo(() => {
     if (safetyFilter === "safe") return projectFiles.filter((sf) => sf.isSafe);
     if (safetyFilter === "unsafe") return projectFiles.filter((sf) => !sf.isSafe);
-    if (safetyFilter === "duplicates") return projectFiles.filter((sf) => sf.totalCopies > 2);
+    if (safetyFilter === "duplicates") {
+      let dups = projectFiles.filter((sf) => sf.totalCopies > 2);
+      if (dupDeviceFilter) {
+        dups = dups.filter((sf) => sf.locations.some((l) => l.deviceId === dupDeviceFilter));
+      }
+      return dups;
+    }
     return projectFiles;
-  }, [projectFiles, safetyFilter]);
+  }, [projectFiles, safetyFilter, dupDeviceFilter]);
 
   // One row per unique file (first location), not one per location
   const rawFiles: FileLocation[] = useMemo(
@@ -259,19 +267,32 @@ export function Projects() {
 
         <div className="browser-controls">
           <div className="filter-toggle">
-            <button className={safetyFilter === "all" ? "active" : ""} onClick={() => { setSafetyFilter("all"); setExtFilter(""); }}>
+            <button className={safetyFilter === "all" ? "active" : ""} onClick={() => { setSafetyFilter("all"); setExtFilter(""); setDupDeviceFilter(""); }}>
               All
             </button>
-            <button className={safetyFilter === "safe" ? "active" : ""} onClick={() => { setSafetyFilter("safe"); setExtFilter(""); }}>
+            <button className={safetyFilter === "safe" ? "active" : ""} onClick={() => { setSafetyFilter("safe"); setExtFilter(""); setDupDeviceFilter(""); }}>
               Safe Only
             </button>
-            <button className={safetyFilter === "unsafe" ? "active" : ""} onClick={() => { setSafetyFilter("unsafe"); setExtFilter(""); }}>
+            <button className={safetyFilter === "unsafe" ? "active" : ""} onClick={() => { setSafetyFilter("unsafe"); setExtFilter(""); setDupDeviceFilter(""); }}>
               Unsafe Only
             </button>
             <button className={safetyFilter === "duplicates" ? "active" : ""} onClick={() => { setSafetyFilter("duplicates"); setExtFilter(""); }}>
               Duplicates
             </button>
           </div>
+          {safetyFilter === "duplicates" && (
+            <select
+              value={dupDeviceFilter}
+              onChange={(e) => setDupDeviceFilter(e.target.value)}
+            >
+              <option value="">All devices</option>
+              {devices.filter((d) => d.isConnected).map((d) => (
+                <option key={d.id} value={d.id}>
+                  {d.label} ({d.mountPoint})
+                </option>
+              ))}
+            </select>
+          )}
         </div>
 
         {rawFiles.length > 0 && (

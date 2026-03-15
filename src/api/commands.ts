@@ -93,9 +93,10 @@ export async function getSafeFilesPage(
 
 export async function getDuplicateFilesPage(
   offset?: number,
-  limit?: number
+  limit?: number,
+  deviceId?: string
 ): Promise<UnsafeFilePageResult> {
-  return invoke("get_duplicate_files_page", { offset, limit });
+  return invoke("get_duplicate_files_page", { offset, limit, deviceId });
 }
 
 export async function deleteFileCopy(locationId: number): Promise<void> {

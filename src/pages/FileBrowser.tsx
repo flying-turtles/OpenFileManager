@@ -34,6 +34,7 @@ export function FileBrowser() {
   const [extFilter, setExtFilter] = useState("");
   const [sortKey, setSortKey] = useState<SortKey>("name");
   const [sortDir, setSortDir] = useState<SortDir>("asc");
+  const [dupDeviceFilter, setDupDeviceFilter] = useState("");
 
   const deviceNames = useMemo(() => {
     const map: Record<string, string> = {};
@@ -52,14 +53,15 @@ export function FileBrowser() {
     } else if (filter === "safe") {
       loadSafeFiles();
     } else if (filter === "duplicates") {
-      loadDuplicateFiles();
+      loadDuplicateFiles(dupDeviceFilter || undefined);
     } else if (selectedDevice) {
       loadDeviceFiles(selectedDevice);
     }
-  }, [selectedDevice, filter, loadDeviceFiles, loadUnsafeFiles, loadSafeFiles, loadDuplicateFiles]);
+  }, [selectedDevice, filter, dupDeviceFilter, loadDeviceFiles, loadUnsafeFiles, loadSafeFiles, loadDuplicateFiles]);
 
   useEffect(() => {
     setExtFilter("");
+    setDupDeviceFilter("");
   }, [filter, selectedDevice]);
 
   const rawFiles: FileLocation[] =
@@ -141,6 +143,19 @@ export function FileBrowser() {
           >
             <option value="">Select device...</option>
             {devices.map((d) => (
+              <option key={d.id} value={d.id}>
+                {d.label} ({d.mountPoint})
+              </option>
+            ))}
+          </select>
+        )}
+        {filter === "duplicates" && (
+          <select
+            value={dupDeviceFilter}
+            onChange={(e) => setDupDeviceFilter(e.target.value)}
+          >
+            <option value="">All devices</option>
+            {devices.filter((d) => d.isConnected).map((d) => (
               <option key={d.id} value={d.id}>
                 {d.label} ({d.mountPoint})
               </option>

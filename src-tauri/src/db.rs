@@ -429,36 +429,75 @@ pub async fn get_duplicate_files_page(
     pool: &DbPool,
     offset: i64,
     limit: i64,
+    device_id: Option<&str>,
 ) -> Result<(Vec<FileSafety>, i64, bool), AppError> {
-    let (total,): (i64,) = sqlx::query_as(
-        "SELECT COUNT(*) FROM (
-            SELECT f.blake3_hash
-            FROM files f
-            JOIN file_locations fl ON f.blake3_hash = fl.blake3_hash
-            GROUP BY f.blake3_hash
-            HAVING COUNT(fl.id) > 2
-        )"
-    )
-    .fetch_one(pool)
-    .await?;
+    let (total,): (i64,) = if let Some(did) = device_id {
+        sqlx::query_as(
+            "SELECT COUNT(*) FROM (
+                SELECT f.blake3_hash
+                FROM files f
+                JOIN file_locations fl ON f.blake3_hash = fl.blake3_hash
+                WHERE f.blake3_hash IN (SELECT blake3_hash FROM file_locations WHERE device_id = ?)
+                GROUP BY f.blake3_hash
+                HAVING COUNT(fl.id) > 2
+            )"
+        )
+        .bind(did)
+        .fetch_one(pool)
+        .await?
+    } else {
+        sqlx::query_as(
+            "SELECT COUNT(*) FROM (
+                SELECT f.blake3_hash
+                FROM files f
+                JOIN file_locations fl ON f.blake3_hash = fl.blake3_hash
+                GROUP BY f.blake3_hash
+                HAVING COUNT(fl.id) > 2
+            )"
+        )
+        .fetch_one(pool)
+        .await?
+    };
 
-    let rows = sqlx::query_as::<_, (String, i64, String, i64, i64, i64)>(
-        "SELECT f.blake3_hash, f.file_size, f.representative_name,
-                COUNT(fl.id) as total_copies,
-                COALESCE(SUM(CASE WHEN d.device_type = 'hot' THEN 1 ELSE 0 END), 0) as hot_copies,
-                COALESCE(SUM(CASE WHEN d.device_type = 'cold' THEN 1 ELSE 0 END), 0) as cold_copies
-         FROM files f
-         JOIN file_locations fl ON f.blake3_hash = fl.blake3_hash
-         LEFT JOIN storage_devices d ON fl.device_id = d.id
-         GROUP BY f.blake3_hash
-         HAVING COUNT(fl.id) > 2
-         ORDER BY f.file_size DESC
-         LIMIT ? OFFSET ?"
-    )
-    .bind(limit)
-    .bind(offset)
-    .fetch_all(pool)
-    .await?;
+    let rows = if let Some(did) = device_id {
+        sqlx::query_as::<_, (String, i64, String, i64, i64, i64)>(
+            "SELECT f.blake3_hash, f.file_size, f.representative_name,
+                    COUNT(fl.id) as total_copies,
+                    COALESCE(SUM(CASE WHEN d.device_type = 'hot' THEN 1 ELSE 0 END), 0) as hot_copies,
+                    COALESCE(SUM(CASE WHEN d.device_type = 'cold' THEN 1 ELSE 0 END), 0) as cold_copies
+             FROM files f
+             JOIN file_locations fl ON f.blake3_hash = fl.blake3_hash
+             LEFT JOIN storage_devices d ON fl.device_id = d.id
+             WHERE f.blake3_hash IN (SELECT blake3_hash FROM file_locations WHERE device_id = ?)
+             GROUP BY f.blake3_hash
+             HAVING COUNT(fl.id) > 2
+             ORDER BY f.file_size DESC
+             LIMIT ? OFFSET ?"
+        )
+        .bind(did)
+        .bind(limit)
+        .bind(offset)
+        .fetch_all(pool)
+        .await?
+    } else {
+        sqlx::query_as::<_, (String, i64, String, i64, i64, i64)>(
+            "SELECT f.blake3_hash, f.file_size, f.representative_name,
+                    COUNT(fl.id) as total_copies,
+                    COALESCE(SUM(CASE WHEN d.device_type = 'hot' THEN 1 ELSE 0 END), 0) as hot_copies,
+                    COALESCE(SUM(CASE WHEN d.device_type = 'cold' THEN 1 ELSE 0 END), 0) as cold_copies
+             FROM files f
+             JOIN file_locations fl ON f.blake3_hash = fl.blake3_hash
+             LEFT JOIN storage_devices d ON fl.device_id = d.id
+             GROUP BY f.blake3_hash
+             HAVING COUNT(fl.id) > 2
+             ORDER BY f.file_size DESC
+             LIMIT ? OFFSET ?"
+        )
+        .bind(limit)
+        .bind(offset)
+        .fetch_all(pool)
+        .await?
+    };
 
     let hashes: Vec<String> = rows.iter().map(|(h, ..)| h.clone()).collect();
     let locations_map = get_locations_for_hashes(pool, &hashes).await?;

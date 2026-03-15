@@ -55,9 +55,10 @@ pub async fn get_duplicate_files_page(
     state: State<'_, AppState>,
     offset: Option<i64>,
     limit: Option<i64>,
+    device_id: Option<String>,
 ) -> Result<UnsafeFilePageResult, AppError> {
     let (files, total, has_more) =
-        db::get_duplicate_files_page(&state.pool, offset.unwrap_or(0), limit.unwrap_or(500)).await?;
+        db::get_duplicate_files_page(&state.pool, offset.unwrap_or(0), limit.unwrap_or(500), device_id.as_deref()).await?;
     Ok(UnsafeFilePageResult { files, total, has_more })
 }
 
