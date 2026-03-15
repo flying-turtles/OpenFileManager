@@ -9,15 +9,15 @@ type SortDir = "asc" | "desc";
 type FilterMode = "all" | "unsafe" | "safe" | "duplicates";
 
 function getExtension(f: FileLocation): string {
-  const dot = f.file_name.lastIndexOf(".");
-  return dot > 0 ? f.file_name.slice(dot + 1).toLowerCase() : "";
+  const dot = f.fileName.lastIndexOf(".");
+  return dot > 0 ? f.fileName.slice(dot + 1).toLowerCase() : "";
 }
 
 function sortFiles(files: FileLocation[], key: SortKey, dir: SortDir): FileLocation[] {
   const sorted = [...files].sort((a, b) => {
-    if (key === "size") return a.file_size - b.file_size;
-    if (key === "modified") return (a.modified_at ?? "").localeCompare(b.modified_at ?? "");
-    return a.file_name.localeCompare(b.file_name);
+    if (key === "size") return a.fileSize - b.fileSize;
+    if (key === "modified") return (a.modifiedAt ?? "").localeCompare(b.modifiedAt ?? "");
+    return a.fileName.localeCompare(b.fileName);
   });
   return dir === "desc" ? sorted.reverse() : sorted;
 }
@@ -137,7 +137,7 @@ export function FileBrowser() {
             <option value="">Select device...</option>
             {devices.map((d) => (
               <option key={d.id} value={d.id}>
-                {d.label} ({d.mount_point})
+                {d.label} ({d.mountPoint})
               </option>
             ))}
           </select>
@@ -145,7 +145,7 @@ export function FileBrowser() {
       </div>
 
       {rawFiles.length > 0 && (
-        <div className="browser-controls" style={{ marginTop: 0 }}>
+        <div className="browser-controls mt-0">
           <select
             value={extFilter}
             onChange={(e) => setExtFilter(e.target.value)}
@@ -187,7 +187,9 @@ export function FileBrowser() {
       )}
 
       {loading ? (
-        <div>Loading...</div>
+        <div>
+          {[...Array(8)].map((_, i) => <div key={i} className="skeleton skeleton-row" />)}
+        </div>
       ) : (
         <FileTable
           files={displayFiles}

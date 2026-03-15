@@ -13,10 +13,10 @@ export function NetworkDriveCard({ drive, onMount, onUnmount, onRemove }: Props)
   const [error, setError] = useState("");
 
   const typeColors: Record<string, string> = {
-    hot: "#e74c3c",
-    cold: "#3498db",
-    production: "#f39c12",
-    unknown: "#95a5a6",
+    hot: "var(--type-hot)",
+    cold: "var(--type-cold)",
+    production: "var(--type-production)",
+    unknown: "var(--type-unknown)",
   };
 
   const handleMount = async () => {
@@ -54,30 +54,30 @@ export function NetworkDriveCard({ drive, onMount, onUnmount, onRemove }: Props)
   };
 
   return (
-    <div className={`device-card ${!drive.is_mounted ? "disconnected" : ""}`}>
+    <div className={`device-card ${!drive.isMounted ? "disconnected" : ""}`}>
       <div className="device-header">
         <h3>{drive.label}</h3>
         <div className="device-badges">
           <span className="badge badge-network">{drive.protocol.toUpperCase()}</span>
-          {drive.is_mounted ? (
+          {drive.isMounted ? (
             <span className="badge badge-safe">Mounted</span>
           ) : (
             <span className="badge badge-disconnected">Unmounted</span>
           )}
           <span
             className="device-type-badge"
-            style={{ backgroundColor: typeColors[drive.device_type] || "#95a5a6" }}
+            style={{ backgroundColor: typeColors[drive.deviceType] || "var(--type-unknown)" }}
           >
-            {drive.device_type}
+            {drive.deviceType}
           </span>
         </div>
       </div>
       <div className="device-mount">
-        {drive.host}/{drive.share_path}
+        {drive.host}/{drive.sharePath}
       </div>
       {error && <div className="error-msg" style={{ marginBottom: 8, fontSize: 12 }}>{error}</div>}
       <div className="device-actions">
-        {drive.is_mounted ? (
+        {drive.isMounted ? (
           <button onClick={handleUnmount} disabled={loading}>
             {loading ? "Unmounting..." : "Unmount"}
           </button>

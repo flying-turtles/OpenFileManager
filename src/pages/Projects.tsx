@@ -4,6 +4,7 @@ import { useDevices } from "../hooks/useDevices";
 import { FileTable } from "../components/FileTable";
 import { getFileSafety, deleteFileCopy } from "../api/commands";
 import type { Project, FileLocation, FileSafety } from "../types";
+import "./Projects.css";
 
 function formatBytes(bytes: number): string {
   if (bytes === 0) return "0 B";
@@ -19,15 +20,15 @@ type SortKey = "name" | "size" | "modified";
 type SortDir = "asc" | "desc";
 
 function getExtension(f: FileLocation): string {
-  const dot = f.file_name.lastIndexOf(".");
-  return dot > 0 ? f.file_name.slice(dot + 1).toLowerCase() : "";
+  const dot = f.fileName.lastIndexOf(".");
+  return dot > 0 ? f.fileName.slice(dot + 1).toLowerCase() : "";
 }
 
 function sortFiles(files: FileLocation[], key: SortKey, dir: SortDir): FileLocation[] {
   const sorted = [...files].sort((a, b) => {
-    if (key === "size") return a.file_size - b.file_size;
-    if (key === "modified") return (a.modified_at ?? "").localeCompare(b.modified_at ?? "");
-    return a.file_name.localeCompare(b.file_name);
+    if (key === "size") return a.fileSize - b.fileSize;
+    if (key === "modified") return (a.modifiedAt ?? "").localeCompare(b.modifiedAt ?? "");
+    return a.fileName.localeCompare(b.fileName);
   });
   return dir === "desc" ? sorted.reverse() : sorted;
 }
@@ -88,8 +89,8 @@ export function Projects() {
   const openEdit = (p: Project) => {
     setTitle(p.title);
     setDescription(p.description);
-    setStartDate(p.start_date);
-    setEndDate(p.end_date);
+    setStartDate(p.startDate);
+    setEndDate(p.endDate);
     setView("edit");
   };
 
@@ -116,7 +117,7 @@ export function Projects() {
       prev
         .map((sf) => ({
           ...sf,
-          total_copies: sf.total_copies - (sf.locations.some((l) => l.id === locationId) ? 1 : 0),
+          totalCopies: sf.totalCopies - (sf.locations.some((l) => l.id === locationId) ? 1 : 0),
           locations: sf.locations.filter((l) => l.id !== locationId),
         }))
         .filter((sf) => sf.locations.length > 0)
@@ -125,9 +126,9 @@ export function Projects() {
 
   // Filter project files by safety status
   const filteredSafetyFiles: FileSafety[] = useMemo(() => {
-    if (safetyFilter === "safe") return projectFiles.filter((sf) => sf.is_safe);
-    if (safetyFilter === "unsafe") return projectFiles.filter((sf) => !sf.is_safe);
-    if (safetyFilter === "duplicates") return projectFiles.filter((sf) => sf.total_copies > 2);
+    if (safetyFilter === "safe") return projectFiles.filter((sf) => sf.isSafe);
+    if (safetyFilter === "unsafe") return projectFiles.filter((sf) => !sf.isSafe);
+    if (safetyFilter === "duplicates") return projectFiles.filter((sf) => sf.totalCopies > 2);
     return projectFiles;
   }, [projectFiles, safetyFilter]);
 
@@ -224,29 +225,29 @@ export function Projects() {
         <div className="page-header">
           <div>
             <h1>{project.title}</h1>
-            {project.description && <p style={{ color: "var(--text-muted)", marginTop: 4 }}>{project.description}</p>}
-            <p style={{ color: "var(--text-muted)", fontSize: 12, marginTop: 4 }}>
-              {project.start_date} — {project.end_date}
+            {project.description && <p className="text-muted-color mt-4">{project.description}</p>}
+            <p className="text-muted-color text-xs mt-4">
+              {project.startDate} — {project.endDate}
             </p>
           </div>
-          <div style={{ display: "flex", gap: 8 }}>
+          <div className="flex-row gap-8">
             <button onClick={() => { setSelected(null); setView("list"); }}>Back</button>
             <button onClick={() => openEdit(project)}>Edit</button>
             <button className="btn-danger" onClick={() => handleDeleteProject(project.id)}>Delete</button>
           </div>
         </div>
 
-        <div className="stats-grid" style={{ marginBottom: 20 }}>
+        <div className="stats-grid mb-20">
           <div className="stat-card">
-            <div className="stat-value">{stats.total_files}</div>
+            <div className="stat-value">{stats.totalFiles}</div>
             <div className="stat-label">Files</div>
           </div>
           <div className="stat-card">
-            <div className="stat-value">{formatBytes(stats.total_size_bytes)}</div>
+            <div className="stat-value">{formatBytes(stats.totalSizeBytes)}</div>
             <div className="stat-label">Total Size</div>
           </div>
           <div className="stat-card">
-            <div className="stat-value">{stats.backed_up_pct.toFixed(0)}%</div>
+            <div className="stat-value">{stats.backedUpPct.toFixed(0)}%</div>
             <div className="stat-label">Backed Up</div>
           </div>
         </div>
@@ -269,7 +270,7 @@ export function Projects() {
         </div>
 
         {rawFiles.length > 0 && (
-          <div className="browser-controls" style={{ marginTop: 0 }}>
+          <div className="browser-controls mt-0">
             <select
               value={extFilter}
               onChange={(e) => setExtFilter(e.target.value)}
@@ -302,7 +303,9 @@ export function Projects() {
         )}
 
         {loading ? (
-          <div>Loading...</div>
+          <div>
+            {[...Array(8)].map((_, i) => <div key={i} className="skeleton skeleton-row" />)}
+          </div>
         ) : (
           <FileTable
             files={displayFiles}
@@ -334,27 +337,29 @@ export function Projects() {
         <button className="btn-primary" onClick={openCreate}>New Project</button>
       </div>
 
-      {loading && <div>Loading...</div>}
-
-      {!loading && projects.length === 0 && (
+      {loading ? (
+        <div className="project-grid">
+          {[...Array(3)].map((_, i) => <div key={i} className="skeleton skeleton-card" />)}
+        </div>
+      ) : projects.length === 0 ? (
         <p className="empty">No projects yet</p>
-      )}
-
+      ) : (
       <div className="project-grid">
         {projects.map((p) => (
           <div key={p.id} className="project-card" onClick={() => openDetail(p.id)}>
             <h3>{p.title}</h3>
             {p.description && (
-              <p style={{ color: "var(--text-muted)", fontSize: 13, marginTop: 4 }}>
+              <p className="text-muted-color text-sm mt-4">
                 {p.description.length > 80 ? p.description.slice(0, 80) + "…" : p.description}
               </p>
             )}
-            <p style={{ color: "var(--text-muted)", fontSize: 12, marginTop: 8 }}>
-              {p.start_date} — {p.end_date}
+            <p className="text-muted-color text-xs mt-8">
+              {p.startDate} — {p.endDate}
             </p>
           </div>
         ))}
       </div>
+      )}
     </div>
   );
 }

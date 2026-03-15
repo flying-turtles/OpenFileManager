@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { open } from "@tauri-apps/plugin-dialog";
+import { useFocusTrap } from "../hooks/useFocusTrap";
 
 interface Props {
   onAdd: (path: string, label: string, deviceType: string) => Promise<unknown>;
@@ -7,6 +8,7 @@ interface Props {
 }
 
 export function AddLocationModal({ onAdd, onClose }: Props) {
+  const trapRef = useFocusTrap<HTMLDivElement>();
   const [path, setPath] = useState("");
   const [label, setLabel] = useState("");
   const [deviceType, setDeviceType] = useState("unknown");
@@ -41,19 +43,19 @@ export function AddLocationModal({ onAdd, onClose }: Props) {
   };
 
   return (
-    <div className="modal-overlay" onClick={onClose}>
-      <div className="modal-content" onClick={(e) => e.stopPropagation()}>
+    <div className="modal-overlay" onClick={onClose} role="dialog" aria-label="Add location" aria-modal="true" onKeyDown={(e) => { if (e.key === "Escape") onClose(); }}>
+      <div className="modal-content" ref={trapRef} onClick={(e) => e.stopPropagation()}>
         <h2>Add Location</h2>
         {error && <div className="error-msg">{error}</div>}
         <div className="form-group">
           <label>Folder</label>
-          <div style={{ display: "flex", gap: 8 }}>
+          <div className="flex-row gap-8">
             <input
               type="text"
               value={path}
               onChange={(e) => setPath(e.target.value)}
               placeholder="/Volumes/MyDrive"
-              style={{ flex: 1 }}
+              className="flex-1"
             />
             <button onClick={handleBrowse}>Browse</button>
           </div>

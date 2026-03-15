@@ -35,7 +35,7 @@ export function useImport() {
     if ("AnalysisStarted" in event) {
       setAnalysisProgress({
         processed: 0,
-        total: event.AnalysisStarted.total_files,
+        total: event.AnalysisStarted.totalFiles,
       });
     } else if ("AnalysisProgress" in event) {
       setAnalysisProgress({
@@ -48,7 +48,7 @@ export function useImport() {
     } else if ("CopyProgress" in event) {
       setCopyProgress((prev) => ({
         ...prev,
-        [event.CopyProgress.device_id]: event.CopyProgress,
+        [event.CopyProgress.deviceId]: event.CopyProgress,
       }));
     } else if ("Error" in event) {
       setErrors((prev) => [...prev, event.Error.message]);

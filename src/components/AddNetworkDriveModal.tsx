@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { useFocusTrap } from "../hooks/useFocusTrap";
 
 interface Props {
   onAdd: (
@@ -14,6 +15,7 @@ interface Props {
 }
 
 export function AddNetworkDriveModal({ onAdd, onClose }: Props) {
+  const trapRef = useFocusTrap<HTMLDivElement>();
   const [protocol, setProtocol] = useState("smb");
   const [host, setHost] = useState("");
   const [sharePath, setSharePath] = useState("");
@@ -41,8 +43,8 @@ export function AddNetworkDriveModal({ onAdd, onClose }: Props) {
   };
 
   return (
-    <div className="modal-overlay" onClick={onClose}>
-      <div className="modal-content" onClick={(e) => e.stopPropagation()}>
+    <div className="modal-overlay" onClick={onClose} role="dialog" aria-label="Add network drive" aria-modal="true" onKeyDown={(e) => { if (e.key === "Escape") onClose(); }}>
+      <div className="modal-content" ref={trapRef} onClick={(e) => e.stopPropagation()}>
         <h2>Add Network Drive</h2>
         {error && <div className="error-msg">{error}</div>}
         <div className="form-group">

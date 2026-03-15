@@ -2,6 +2,7 @@ import { useState, useRef, useMemo } from "react";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import type { FileLocation, FileSafety } from "../types";
 import { SafetyBadge } from "./SafetyBadge";
+import "./FileTable.css";
 
 function formatBytes(bytes: number): string {
   if (bytes === 0) return "0 B";
@@ -38,7 +39,7 @@ export function FileTable({ files, totalCount, deviceNames, onGetSafety, onDelet
     }
     setExpandedId(file.id);
     if (onGetSafety) {
-      const s = await onGetSafety(file.blake3_hash);
+      const s = await onGetSafety(file.blake3Hash);
       setSafety(s);
     }
   };
@@ -52,7 +53,7 @@ export function FileTable({ files, totalCount, deviceNames, onGetSafety, onDelet
       if (safety) {
         const updated = {
           ...safety,
-          total_copies: safety.total_copies - 1,
+          totalCopies: safety.totalCopies - 1,
           locations: safety.locations.filter((l) => l.id !== confirmDelete.id),
         };
         if (updated.locations.length === 0) {
@@ -136,27 +137,27 @@ export function FileTable({ files, totalCount, deviceNames, onGetSafety, onDelet
                     <td colSpan={5}>
                       <div className="safety-detail">
                         <SafetyBadge
-                          totalCopies={row.safety.total_copies}
-                          coldCopies={row.safety.cold_copies}
-                          isSafe={row.safety.is_safe}
+                          totalCopies={row.safety.totalCopies}
+                          coldCopies={row.safety.coldCopies}
+                          isSafe={row.safety.isSafe}
                         />
                         <span>
-                          {row.safety.total_copies} copies (
-                          {row.safety.hot_copies} hot, {row.safety.cold_copies}{" "}
+                          {row.safety.totalCopies} copies (
+                          {row.safety.hotCopies} hot, {row.safety.coldCopies}{" "}
                           cold)
                         </span>
                         <div className="locations-list">
                           {row.safety.locations.map((loc) => (
                             <div key={loc.id} className="location-item location-item-row">
                               <span className="location-item-path">
-                                [{deviceNames?.[loc.device_id] ?? loc.device_id.slice(0, 8)}] {loc.file_path}
+                                [{deviceNames?.[loc.deviceId] ?? loc.deviceId.slice(0, 8)}] {loc.filePath}
                               </span>
                               {onDeleteLocation && (
                                 <button
                                   className="btn-delete-copy"
                                   onClick={(e) => {
                                     e.stopPropagation();
-                                    setConfirmDelete({ id: loc.id, path: loc.file_path });
+                                    setConfirmDelete({ id: loc.id, path: loc.filePath });
                                   }}
                                 >
                                   Delete
@@ -177,13 +178,17 @@ export function FileTable({ files, totalCount, deviceNames, onGetSafety, onDelet
                     expandedId === row.file.id ? "expanded" : ""
                   }
                   onClick={() => toggleExpand(row.file)}
+                  role="button"
+                  tabIndex={0}
+                  aria-expanded={expandedId === row.file.id}
+                  onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); toggleExpand(row.file); } }}
                   style={{ cursor: "pointer" }}
                 >
-                  <td>{row.file.file_name}</td>
-                  <td>{formatBytes(row.file.file_size)}</td>
-                  <td className="path-cell">{row.file.file_path}</td>
-                  <td>{row.file.scan_mode}</td>
-                  <td>{row.file.modified_at || "-"}</td>
+                  <td>{row.file.fileName}</td>
+                  <td>{formatBytes(row.file.fileSize)}</td>
+                  <td className="path-cell">{row.file.filePath}</td>
+                  <td>{row.file.scanMode}</td>
+                  <td>{row.file.modifiedAt || "-"}</td>
                 </tr>
               );
             })}
@@ -197,7 +202,7 @@ export function FileTable({ files, totalCount, deviceNames, onGetSafety, onDelet
       </div>
 
       {confirmDelete && (
-        <div className="modal-overlay" onClick={() => !deleting && setConfirmDelete(null)}>
+        <div className="modal-overlay" onClick={() => !deleting && setConfirmDelete(null)} role="dialog" aria-label="Delete file copy" aria-modal="true">
           <div className="modal-content" onClick={(e) => e.stopPropagation()}>
             <h2>Delete file copy?</h2>
             <p style={{ marginBottom: 12, wordBreak: "break-all", color: "var(--text-muted)", fontSize: 13 }}>

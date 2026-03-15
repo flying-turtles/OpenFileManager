@@ -36,7 +36,7 @@ export function useFiles() {
         accumulated = [...accumulated, ...page.files];
         setFiles(accumulated);
         setTotalCount(page.total);
-        cursor = page.next_cursor ?? undefined;
+        cursor = page.nextCursor ?? undefined;
         if (firstPage) {
           setLoading(false);
           firstPage = false;
@@ -63,7 +63,7 @@ export function useFiles() {
         accumulated = [...accumulated, ...page.files];
         setUnsafeFiles(accumulated);
         setTotalCount(page.total);
-        hasMore = page.has_more;
+        hasMore = page.hasMore;
         offset += page.files.length;
         if (firstPage) {
           setLoading(false);
@@ -91,7 +91,7 @@ export function useFiles() {
         accumulated = [...accumulated, ...page.files];
         setSafeFiles(accumulated);
         setTotalCount(page.total);
-        hasMore = page.has_more;
+        hasMore = page.hasMore;
         offset += page.files.length;
         if (firstPage) {
           setLoading(false);
@@ -119,7 +119,7 @@ export function useFiles() {
         accumulated = [...accumulated, ...page.files];
         setDuplicateFiles(accumulated);
         setTotalCount(page.total);
-        hasMore = page.has_more;
+        hasMore = page.hasMore;
         offset += page.files.length;
         if (firstPage) {
           setLoading(false);
@@ -138,7 +138,7 @@ export function useFiles() {
       prev
         .map((sf) => ({
           ...sf,
-          total_copies: sf.total_copies - (sf.locations.some((l) => l.id === locationId) ? 1 : 0),
+          totalCopies: sf.totalCopies - (sf.locations.some((l) => l.id === locationId) ? 1 : 0),
           locations: sf.locations.filter((l) => l.id !== locationId),
         }))
         .filter((sf) => sf.locations.length > 0)

@@ -17,33 +17,37 @@ export function Dashboard() {
     getDashboardStats().then(setStats).catch(console.error);
   }, []);
 
-  if (!stats) return <div className="page">Loading...</div>;
-
   return (
     <div className="page">
       <h1>Dashboard</h1>
+      {!stats ? (
+        <div className="stats-grid">
+          {[...Array(4)].map((_, i) => <div key={i} className="skeleton skeleton-stat" />)}
+        </div>
+      ) : (
       <div className="stats-grid">
         <div className="stat-card">
-          <div className="stat-value">{stats.total_files}</div>
+          <div className="stat-value">{stats.totalFiles}</div>
           <div className="stat-label">Unique Files</div>
         </div>
         <div className="stat-card">
-          <div className="stat-value">{stats.total_locations}</div>
+          <div className="stat-value">{stats.totalLocations}</div>
           <div className="stat-label">File Copies</div>
         </div>
-        <div className={`stat-card ${stats.unsafe_files > 0 ? "stat-danger" : ""}`}>
-          <div className="stat-value">{stats.unsafe_files}</div>
+        <div className={`stat-card ${stats.unsafeFiles > 0 ? "stat-danger" : ""}`}>
+          <div className="stat-value">{stats.unsafeFiles}</div>
           <div className="stat-label">Unsafe Files</div>
         </div>
         <div className="stat-card">
-          <div className="stat-value">{stats.total_devices}</div>
+          <div className="stat-value">{stats.totalDevices}</div>
           <div className="stat-label">Devices</div>
         </div>
         <div className="stat-card">
-          <div className="stat-value">{formatBytes(stats.total_size_bytes)}</div>
+          <div className="stat-value">{formatBytes(stats.totalSizeBytes)}</div>
           <div className="stat-label">Total Size</div>
         </div>
       </div>
+      )}
     </div>
   );
 }

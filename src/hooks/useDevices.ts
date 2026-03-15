@@ -26,7 +26,7 @@ export function useDevices() {
     async (deviceId: string, deviceType: string) => {
       await apiSetDeviceType(deviceId, deviceType);
       setDevices((prev) =>
-        prev.map((d) => (d.id === deviceId ? { ...d, device_type: deviceType } : d))
+        prev.map((d) => (d.id === deviceId ? { ...d, deviceType: deviceType } : d))
       );
     },
     []

@@ -5,20 +5,21 @@ import type { StorageDevice, PendingScan } from "../types";
 import { useScanProgress } from "../hooks/useScanProgress";
 import { ProgressBar } from "../components/ProgressBar";
 import { getPendingScans, dismissPendingScan } from "../api/commands";
+import "./Scanner.css";
 
 interface Props {
   initialDevice?: StorageDevice;
 }
 
 export function Scanner({ initialDevice }: Props) {
-  const [target, setTarget] = useState(initialDevice?.mount_point || "");
+  const [target, setTarget] = useState(initialDevice?.mountPoint || "");
   const [dragOver, setDragOver] = useState(false);
   const [pendingScans, setPendingScans] = useState<PendingScan[]>([]);
   const progress = useScanProgress();
 
   useEffect(() => {
-    if (initialDevice?.mount_point) {
-      setTarget(initialDevice.mount_point);
+    if (initialDevice?.mountPoint) {
+      setTarget(initialDevice.mountPoint);
     }
   }, [initialDevice]);
 
@@ -104,9 +105,9 @@ export function Scanner({ initialDevice }: Props) {
               <div className="pending-scan-info">
                 <span className="pending-scan-target">{ps.target}</span>
                 <span className="pending-scan-stats">
-                  {ps.processed} / {ps.total_files} scanned · {ps.hashed} hashed
+                  {ps.processed} / {ps.totalFiles} scanned · {ps.hashed} hashed
                 </span>
-                <span className="pending-scan-date">Paused {ps.paused_at}</span>
+                <span className="pending-scan-date">Paused {ps.pausedAt}</span>
               </div>
               <div className="pending-scan-actions">
                 <button className="btn-primary" onClick={() => handleResume(ps)}>

@@ -2,6 +2,7 @@ use serde::{Deserialize, Serialize};
 use sqlx::FromRow;
 
 #[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
+#[serde(rename_all = "camelCase")]
 pub struct StorageDevice {
     pub id: String,
     pub label: String,
@@ -17,6 +18,7 @@ pub struct StorageDevice {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
+#[serde(rename_all = "camelCase")]
 pub struct FileLocation {
     pub id: i64,
     pub blake3_hash: String,
@@ -30,6 +32,7 @@ pub struct FileLocation {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct DetectedDisk {
     pub id: String,
     pub label: String,
@@ -40,6 +43,7 @@ pub struct DetectedDisk {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct FileSafety {
     pub blake3_hash: String,
     pub file_size: i64,
@@ -52,6 +56,7 @@ pub struct FileSafety {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
+#[serde(rename_all = "camelCase")]
 pub struct WasteCandidate {
     pub blake3_hash: String,
     pub file_size: i64,
@@ -61,6 +66,7 @@ pub struct WasteCandidate {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct DashboardStats {
     pub total_files: i64,
     pub total_locations: i64,
@@ -70,6 +76,7 @@ pub struct DashboardStats {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct DirEntry {
     pub name: String,
     pub is_dir: bool,
@@ -79,17 +86,22 @@ pub struct DirEntry {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum ScanEvent {
+    #[serde(rename_all = "camelCase")]
     Started { total_files: u64 },
     Progress { scanned: u64, total: u64 },
+    #[serde(rename_all = "camelCase")]
     HashingStarted { to_hash: u64, skipped: u64 },
     FileHashed { path: String, hash: String },
+    #[serde(rename_all = "camelCase")]
     Finished { scanned: u64, hashed: u64, added: u64, removed: u64 },
     Error { message: String },
     Cancelled,
+    #[serde(rename_all = "camelCase")]
     Paused { scanned: u64, hashed: u64, added: u64, total: u64 },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
+#[serde(rename_all = "camelCase")]
 pub struct PendingScan {
     pub id: i64,
     pub scan_type: String,
@@ -104,6 +116,7 @@ pub struct PendingScan {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct ImportFile {
     pub source_path: String,
     pub relative_path: String,
@@ -116,6 +129,7 @@ pub struct ImportFile {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct ImportAnalysis {
     pub sd_device_id: String,
     pub sd_label: String,
@@ -126,6 +140,7 @@ pub struct ImportAnalysis {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct DeviceCopyProgress {
     pub device_id: String,
     pub device_label: String,
@@ -137,6 +152,7 @@ pub struct DeviceCopyProgress {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
+#[serde(rename_all = "camelCase")]
 pub struct Project {
     pub id: i64,
     pub title: String,
@@ -153,6 +169,7 @@ pub struct ExtensionCount {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct ProjectStats {
     pub total_files: i64,
     pub total_size_bytes: i64,
@@ -168,6 +185,7 @@ pub struct ProjectDetail {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct FilePageResult {
     pub files: Vec<FileLocation>,
     pub next_cursor: Option<String>,
@@ -175,6 +193,7 @@ pub struct FilePageResult {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct UnsafeFilePageResult {
     pub files: Vec<FileSafety>,
     pub total: i64,
@@ -182,6 +201,7 @@ pub struct UnsafeFilePageResult {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
+#[serde(rename_all = "camelCase")]
 pub struct NetworkDrive {
     pub id: String,
     pub label: String,
@@ -198,9 +218,11 @@ pub struct NetworkDrive {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum ImportEvent {
+    #[serde(rename_all = "camelCase")]
     AnalysisStarted { total_files: u64 },
     AnalysisProgress { processed: u64, total: u64 },
     AnalysisComplete(ImportAnalysis),
+    #[serde(rename_all = "camelCase")]
     CopyStarted { total_files: u64, device_count: u64 },
     CopyProgress(DeviceCopyProgress),
     CopyComplete,

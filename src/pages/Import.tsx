@@ -3,6 +3,7 @@ import { open } from "@tauri-apps/plugin-dialog";
 import { useImport } from "../hooks/useImport";
 import { detectDevices } from "../api/commands";
 import type { StorageDevice } from "../types";
+import "./Import.css";
 
 function formatBytes(bytes: number): string {
   if (bytes === 0) return "0 B";
@@ -36,10 +37,10 @@ export function Import() {
   }, [phase]);
 
   const removableDevices = devices.filter(
-    (d) => d.is_connected && d.is_removable
+    (d) => d.isConnected && d.isRemovable
   );
   const targetDevices = devices.filter(
-    (d) => d.is_connected && d.id !== analysis?.sd_device_id
+    (d) => d.isConnected && d.id !== analysis?.sdDeviceId
   );
 
   const toggleTarget = (id: string) => {
@@ -69,9 +70,9 @@ export function Import() {
             >
               <option value="">Select SD card / removable drive...</option>
               {removableDevices.map((d) => (
-                <option key={d.id} value={d.mount_point}>
+                <option key={d.id} value={d.mountPoint}>
                   {d.label} (
-                  {formatBytes(d.total_bytes - d.available_bytes)} used)
+                  {formatBytes(d.totalBytes - d.availableBytes)} used)
                 </option>
               ))}
             </select>
@@ -153,18 +154,18 @@ export function Import() {
                 <div className="stat-label">Total Files</div>
               </div>
               <div className="stat-card">
-                <div className="stat-value">{analysis.new_file_count}</div>
+                <div className="stat-value">{analysis.newFileCount}</div>
                 <div className="stat-label">New Files</div>
               </div>
               <div className="stat-card">
                 <div className="stat-value">
-                  {analysis.existing_file_count}
+                  {analysis.existingFileCount}
                 </div>
                 <div className="stat-label">Already Backed Up</div>
               </div>
               <div className="stat-card">
                 <div className="stat-value">
-                  {formatBytes(analysis.total_bytes)}
+                  {formatBytes(analysis.totalBytes)}
                 </div>
                 <div className="stat-label">Total Size</div>
               </div>
@@ -176,15 +177,15 @@ export function Import() {
             <div className="import-file-list">
               {analysis.files.slice(0, 100).map((f, i) => (
                 <div key={i} className="import-file-row">
-                  <span className="import-file-name">{f.file_name}</span>
+                  <span className="import-file-name">{f.fileName}</span>
                   <span className="import-file-size">
-                    {formatBytes(f.file_size)}
+                    {formatBytes(f.fileSize)}
                   </span>
-                  <span className="import-file-date">{f.created_date}</span>
-                  {f.existing_locations.length > 0 ? (
+                  <span className="import-file-date">{f.createdDate}</span>
+                  {f.existingLocations.length > 0 ? (
                     <span className="badge badge-safe">
-                      {f.existing_locations.length} backup
-                      {f.existing_locations.length > 1 ? "s" : ""}
+                      {f.existingLocations.length} backup
+                      {f.existingLocations.length > 1 ? "s" : ""}
                     </span>
                   ) : (
                     <span className="badge badge-warn">New</span>
@@ -193,11 +194,7 @@ export function Import() {
               ))}
               {analysis.files.length > 100 && (
                 <div
-                  className="import-file-row"
-                  style={{
-                    justifyContent: "center",
-                    color: "var(--text-muted)",
-                  }}
+                  className="import-file-row text-center text-muted-color"
                 >
                   ...and {analysis.files.length - 100} more files
                 </div>
@@ -212,10 +209,10 @@ export function Import() {
                 const needed = analysis.files
                   .filter(
                     (f) =>
-                      !f.existing_locations.some((l) => l.device_id === d.id)
+                      !f.existingLocations.some((l) => l.deviceId === d.id)
                   )
-                  .reduce((sum, f) => sum + f.file_size, 0);
-                const fits = needed <= d.available_bytes;
+                  .reduce((sum, f) => sum + f.fileSize, 0);
+                const fits = needed <= d.availableBytes;
                 return (
                   <label
                     key={d.id}
@@ -230,7 +227,7 @@ export function Import() {
                     <div className="target-device-info">
                       <span className="target-device-name">{d.label}</span>
                       <span className="target-device-space">
-                        {formatBytes(d.available_bytes)} free
+                        {formatBytes(d.availableBytes)} free
                         {needed > 0 && ` · ${formatBytes(needed)} needed`}
                         {!fits && " · Not enough space"}
                       </span>
@@ -239,14 +236,14 @@ export function Import() {
                       className="device-type-badge"
                       style={{
                         background:
-                          d.device_type === "hot"
+                          d.deviceType === "hot"
                             ? "var(--danger)"
-                            : d.device_type === "cold"
+                            : d.deviceType === "cold"
                               ? "var(--accent)"
                               : "var(--text-muted)",
                       }}
                     >
-                      {d.device_type}
+                      {d.deviceType}
                     </span>
                   </label>
                 );
@@ -271,25 +268,25 @@ export function Import() {
         <div className="import-section">
           <h3>Copying...</h3>
           {Object.values(copyProgress).map((p) => (
-            <div key={p.device_id} className="progress-container">
-              <div className="progress-label">{p.device_label}</div>
+            <div key={p.deviceId} className="progress-container">
+              <div className="progress-label">{p.deviceLabel}</div>
               <div className="progress-bar">
                 <div
                   className="progress-fill"
                   style={{
-                    width: `${p.total_bytes ? (p.bytes_copied / p.total_bytes) * 100 : 100}%`,
+                    width: `${p.totalBytes ? (p.bytesCopied / p.totalBytes) * 100 : 100}%`,
                   }}
                 />
               </div>
               <div className="progress-stats">
                 <span>
-                  {p.files_copied} / {p.total_files} files
+                  {p.filesCopied} / {p.totalFiles} files
                 </span>
                 <span>
-                  {formatBytes(p.bytes_copied)} / {formatBytes(p.total_bytes)}
+                  {formatBytes(p.bytesCopied)} / {formatBytes(p.totalBytes)}
                 </span>
               </div>
-              <div className="progress-file">{p.current_file}</div>
+              <div className="progress-file">{p.currentFile}</div>
             </div>
           ))}
           <button className="btn-danger" onClick={cancel}>
@@ -303,12 +300,12 @@ export function Import() {
           <div className="scan-result">
             <span>Import complete!</span>
           </div>
-          <div className="import-actions" style={{ marginTop: 16 }}>
+          <div className="import-actions mt-16">
             <button
               onClick={() =>
                 eject(
-                  devices.find((d) => d.id === analysis.sd_device_id)
-                    ?.mount_point || ""
+                  devices.find((d) => d.id === analysis.sdDeviceId)
+                    ?.mountPoint || ""
                 )
               }
             >

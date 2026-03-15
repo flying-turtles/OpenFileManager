@@ -1,4 +1,5 @@
 import type { StorageDevice } from "../types";
+import "./DeviceCard.css";
 
 function formatBytes(bytes: number): string {
   if (bytes === 0) return "0 B";
@@ -16,41 +17,41 @@ interface Props {
 }
 
 export function DeviceCard({ device, onSetType, onScan, onRemove }: Props) {
-  const usedBytes = device.total_bytes - device.available_bytes;
-  const usedPct = device.total_bytes > 0 ? (usedBytes / device.total_bytes) * 100 : 0;
+  const usedBytes = device.totalBytes - device.availableBytes;
+  const usedPct = device.totalBytes > 0 ? (usedBytes / device.totalBytes) * 100 : 0;
 
   const typeColors: Record<string, string> = {
-    hot: "#e74c3c",
-    cold: "#3498db",
-    production: "#f39c12",
-    unknown: "#95a5a6",
+    hot: "var(--type-hot)",
+    cold: "var(--type-cold)",
+    production: "var(--type-production)",
+    unknown: "var(--type-unknown)",
   };
 
   return (
-    <div className={`device-card ${!device.is_connected ? "disconnected" : ""}`}>
+    <div className={`device-card ${!device.isConnected ? "disconnected" : ""}`}>
       <div className="device-header">
         <h3>{device.label}</h3>
         <div className="device-badges">
-          {!device.is_connected && <span className="badge badge-disconnected">Disconnected</span>}
+          {!device.isConnected && <span className="badge badge-disconnected">Disconnected</span>}
           <span
             className="device-type-badge"
-            style={{ backgroundColor: typeColors[device.device_type] || "#95a5a6" }}
+            style={{ backgroundColor: typeColors[device.deviceType] || "var(--type-unknown)" }}
           >
-            {device.device_type}
+            {device.deviceType}
           </span>
         </div>
       </div>
-      <div className="device-mount">{device.mount_point}</div>
+      <div className="device-mount">{device.mountPoint}</div>
       <div className="capacity-bar">
         <div className="capacity-used" style={{ width: `${usedPct}%` }} />
       </div>
       <div className="capacity-text">
-        {formatBytes(usedBytes)} / {formatBytes(device.total_bytes)}
+        {formatBytes(usedBytes)} / {formatBytes(device.totalBytes)}
       </div>
-      {device.is_removable && <div className="removable-tag">Removable</div>}
+      {device.isRemovable && <div className="removable-tag">Removable</div>}
       <div className="device-actions">
         <select
-          value={device.device_type}
+          value={device.deviceType}
           onChange={(e) => onSetType(device.id, e.target.value)}
         >
           <option value="unknown">Unknown</option>
@@ -58,7 +59,7 @@ export function DeviceCard({ device, onSetType, onScan, onRemove }: Props) {
           <option value="cold">Cold</option>
           <option value="production">Production</option>
         </select>
-        <button onClick={() => onScan(device)} disabled={!device.is_connected}>
+        <button onClick={() => onScan(device)} disabled={!device.isConnected}>
           Scan
         </button>
         <button className="btn-danger" onClick={() => onRemove(device.id)}>

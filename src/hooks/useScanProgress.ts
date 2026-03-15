@@ -60,9 +60,9 @@ export function useScanProgress() {
         return;
       }
       if (typeof event === "object" && "Started" in event) {
-        setState((s) => ({ ...s, total: event.Started.total_files }));
+        setState((s) => ({ ...s, total: event.Started.totalFiles }));
       } else if (typeof event === "object" && "HashingStarted" in event) {
-        setState((s) => ({ ...s, toHash: event.HashingStarted.to_hash, skipped: event.HashingStarted.skipped }));
+        setState((s) => ({ ...s, toHash: event.HashingStarted.toHash, skipped: event.HashingStarted.skipped }));
       } else if (typeof event === "object" && "Progress" in event) {
         setState((s) => ({
           ...s,

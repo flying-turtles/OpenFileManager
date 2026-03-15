@@ -44,12 +44,12 @@ export function useNetworkDrives() {
 
   const mount = useCallback(async (id: string) => {
     await apiMount(id);
-    setDrives((prev) => prev.map((d) => (d.id === id ? { ...d, is_mounted: true } : d)));
+    setDrives((prev) => prev.map((d) => (d.id === id ? { ...d, isMounted: true } : d)));
   }, []);
 
   const unmount = useCallback(async (id: string) => {
     await apiUnmount(id);
-    setDrives((prev) => prev.map((d) => (d.id === id ? { ...d, is_mounted: false } : d)));
+    setDrives((prev) => prev.map((d) => (d.id === id ? { ...d, isMounted: false } : d)));
   }, []);
 
   const remove = useCallback(async (id: string) => {

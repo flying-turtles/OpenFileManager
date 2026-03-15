@@ -4,6 +4,7 @@ import { useDevices } from "../hooks/useDevices";
 import { DeviceCard } from "../components/DeviceCard";
 import { AddLocationModal } from "../components/AddLocationModal";
 import { addLocation } from "../api/commands";
+import "./Devices.css";
 
 interface Props {
   onScanDevice: (device: StorageDevice) => void;
@@ -28,7 +29,7 @@ export function Devices({ onScanDevice }: Props) {
   const grouped = new Map<string, StorageDevice[]>();
   for (const section of SECTIONS) grouped.set(section.key, []);
   for (const d of devices) {
-    const key = grouped.has(d.device_type) ? d.device_type : "unknown";
+    const key = grouped.has(d.deviceType) ? d.deviceType : "unknown";
     grouped.get(key)!.push(d);
   }
 
@@ -36,7 +37,7 @@ export function Devices({ onScanDevice }: Props) {
     <div className="page">
       <div className="page-header">
         <h1>Devices</h1>
-        <div style={{ display: "flex", gap: 8 }}>
+        <div className="flex-row gap-8">
           <button onClick={() => setShowAddModal(true)}>Add Location</button>
           <button onClick={() => refresh()} disabled={loading}>
             {loading ? "Refreshing..." : "Refresh"}
@@ -44,12 +45,16 @@ export function Devices({ onScanDevice }: Props) {
         </div>
       </div>
 
-      {SECTIONS.map(({ key, label }) => {
+      {loading && devices.length === 0 ? (
+        <div className="device-grid">
+          {[...Array(3)].map((_, i) => <div key={i} className="skeleton skeleton-card" />)}
+        </div>
+      ) : SECTIONS.map(({ key, label }) => {
         const sectionDevices = grouped.get(key)!;
         if (sectionDevices.length === 0) return null;
         return (
-          <div key={key} style={{ marginBottom: 24 }}>
-            <h2 style={{ fontSize: 16, marginBottom: 12, color: "var(--text-muted)" }}>{label}</h2>
+          <div key={key} className="mb-24">
+            <h2 className="text-base mb-12 text-muted-color">{label}</h2>
             <div className="device-grid">
               {sectionDevices.map((d) => (
                 <DeviceCard key={d.id} device={d} onSetType={setType} onScan={onScanDevice} onRemove={remove} />
