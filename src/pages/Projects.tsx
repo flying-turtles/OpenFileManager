@@ -61,6 +61,11 @@ export function Projects() {
     return map;
   }, [devices]);
 
+  const connectedDeviceIds = useMemo(
+    () => new Set(devices.filter((d) => d.isConnected).map((d) => d.id)),
+    [devices],
+  );
+
   // Sync projectFiles with selected project data
   useEffect(() => {
     if (selected) {
@@ -310,6 +315,7 @@ export function Projects() {
           <FileTable
             files={displayFiles}
             deviceNames={deviceNames}
+            connectedDeviceIds={connectedDeviceIds}
             onGetSafety={(hash) => getFileSafety(hash)}
             onDeleteLocation={safetyFilter === "duplicates" ? handleDeleteFileCopy : undefined}
           />

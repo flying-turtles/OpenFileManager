@@ -1,6 +1,8 @@
-import { useState, useRef, useMemo } from "react";
+import { useState, useRef, useMemo, useCallback } from "react";
 import { useVirtualizer } from "@tanstack/react-virtual";
+import { revealItemInDir } from "@tauri-apps/plugin-opener";
 import type { FileLocation, FileSafety } from "../types";
+import { resolveFilePath, openFile } from "../api/commands";
 import { SafetyBadge } from "./SafetyBadge";
 import { FilePreview } from "./FilePreview";
 import "./FileTable.css";
@@ -21,17 +23,35 @@ interface Props {
   files: FileLocation[];
   totalCount?: number;
   deviceNames?: Record<string, string>;
+  connectedDeviceIds?: Set<string>;
   selectedDeviceId?: string;
   onGetSafety?: (hash: string) => Promise<FileSafety | null>;
   onDeleteLocation?: (locationId: number, filePath: string) => Promise<void>;
 }
 
-export function FileTable({ files, totalCount, deviceNames, selectedDeviceId, onGetSafety, onDeleteLocation }: Props) {
+export function FileTable({ files, totalCount, deviceNames, connectedDeviceIds, selectedDeviceId, onGetSafety, onDeleteLocation }: Props) {
   const [expandedId, setExpandedId] = useState<number | null>(null);
   const [safety, setSafety] = useState<FileSafety | null>(null);
   const [confirmDelete, setConfirmDelete] = useState<{ id: number; path: string } | null>(null);
   const [deleting, setDeleting] = useState(false);
   const parentRef = useRef<HTMLDivElement>(null);
+
+  const handleOpenFile = useCallback(async (loc: FileLocation) => {
+    try {
+      await openFile(loc.deviceId, loc.filePath);
+    } catch (e) {
+      console.error("Failed to open file:", e);
+    }
+  }, []);
+
+  const handleRevealFile = useCallback(async (loc: FileLocation) => {
+    try {
+      const absPath = await resolveFilePath(loc.deviceId, loc.filePath);
+      await revealItemInDir(absPath);
+    } catch (e) {
+      console.error("Failed to reveal file:", e);
+    }
+  }, []);
 
   const toggleExpand = async (file: FileLocation) => {
     if (expandedId === file.id) {
@@ -154,24 +174,45 @@ export function FileTable({ files, totalCount, deviceNames, selectedDeviceId, on
                           cold)
                         </span>
                         <div className="locations-list">
-                          {row.safety.locations.map((loc) => (
-                            <div key={loc.id} className="location-item location-item-row">
-                              <span className="location-item-path">
-                                [{deviceNames?.[loc.deviceId] ?? loc.deviceId.slice(0, 8)}] {loc.filePath}
-                              </span>
-                              {onDeleteLocation && (
-                                <button
-                                  className="btn-delete-copy"
-                                  onClick={(e) => {
-                                    e.stopPropagation();
-                                    setConfirmDelete({ id: loc.id, path: loc.filePath });
-                                  }}
-                                >
-                                  Delete
-                                </button>
-                              )}
-                            </div>
-                          ))}
+                          {row.safety.locations.map((loc) => {
+                            const connected = connectedDeviceIds?.has(loc.deviceId) ?? false;
+                            return (
+                              <div key={loc.id} className="location-item location-item-row">
+                                <span className="location-item-path">
+                                  [{deviceNames?.[loc.deviceId] ?? loc.deviceId.slice(0, 8)}] {loc.filePath}
+                                </span>
+                                <div className="location-actions">
+                                  <button
+                                    className="btn-location-action"
+                                    disabled={!connected}
+                                    title={connected ? "Show in Finder" : "Device not connected"}
+                                    onClick={(e) => { e.stopPropagation(); handleRevealFile(loc); }}
+                                  >
+                                    Reveal
+                                  </button>
+                                  <button
+                                    className="btn-location-action"
+                                    disabled={!connected}
+                                    title={connected ? "Open file" : "Device not connected"}
+                                    onClick={(e) => { e.stopPropagation(); handleOpenFile(loc); }}
+                                  >
+                                    Open
+                                  </button>
+                                  {onDeleteLocation && (
+                                    <button
+                                      className="btn-delete-copy"
+                                      onClick={(e) => {
+                                        e.stopPropagation();
+                                        setConfirmDelete({ id: loc.id, path: loc.filePath });
+                                      }}
+                                    >
+                                      Delete
+                                    </button>
+                                  )}
+                                </div>
+                              </div>
+                            );
+                          })}
                         </div>
                       </div>
                     </td>

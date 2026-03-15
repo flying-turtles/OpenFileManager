@@ -41,6 +41,11 @@ export function FileBrowser() {
     return map;
   }, [devices]);
 
+  const connectedDeviceIds = useMemo(
+    () => new Set(devices.filter((d) => d.isConnected).map((d) => d.id)),
+    [devices],
+  );
+
   useEffect(() => {
     if (filter === "unsafe") {
       loadUnsafeFiles();
@@ -195,6 +200,7 @@ export function FileBrowser() {
           files={displayFiles}
           totalCount={extFilter ? undefined : totalCount}
           deviceNames={deviceNames}
+          connectedDeviceIds={connectedDeviceIds}
           selectedDeviceId={filter === "all" ? selectedDevice : undefined}
           onGetSafety={loadFileSafety}
           onDeleteLocation={filter === "duplicates" ? deleteFileCopy : undefined}

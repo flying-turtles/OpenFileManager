@@ -105,3 +105,25 @@ pub async fn get_thumbnail(
 
     Ok(cached_path.to_string_lossy().into_owned())
 }
+
+#[tauri::command]
+pub async fn open_file(
+    state: State<'_, AppState>,
+    device_id: String,
+    file_path: String,
+) -> Result<(), AppError> {
+    let device = db::get_device(&state.pool, &device_id).await?;
+    let full = Path::new(&device.mount_point).join(&file_path);
+    if !full.exists() {
+        return Err(AppError::General(format!("File not found: {}", full.display())));
+    }
+    let output = std::process::Command::new("open")
+        .arg(&full)
+        .output()?;
+    if !output.status.success() {
+        return Err(AppError::General(
+            String::from_utf8_lossy(&output.stderr).to_string(),
+        ));
+    }
+    Ok(())
+}

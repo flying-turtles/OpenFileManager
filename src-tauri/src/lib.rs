@@ -93,6 +93,7 @@ pub fn run() {
             commands::add_location,
             commands::resolve_file_path,
             commands::get_thumbnail,
+            commands::open_file,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

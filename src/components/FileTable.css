@@ -92,6 +92,32 @@
   white-space: nowrap;
 }
 
+.location-actions {
+  display: flex;
+  gap: 4px;
+  flex-shrink: 0;
+}
+
+.btn-location-action {
+  padding: 2px 8px;
+  font-size: 11px;
+  background: transparent;
+  border: 1px solid var(--border);
+  color: var(--text-muted);
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+.btn-location-action:hover:not(:disabled) {
+  border-color: var(--accent, #4a9eff);
+  color: var(--accent, #4a9eff);
+}
+
+.btn-location-action:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+}
+
 .btn-delete-copy {
   flex-shrink: 0;
   padding: 2px 8px;

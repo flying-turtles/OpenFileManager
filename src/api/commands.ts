@@ -238,3 +238,10 @@ export async function getThumbnail(
 ): Promise<string> {
   return invoke("get_thumbnail", { path, maxSize });
 }
+
+export async function openFile(
+  deviceId: string,
+  filePath: string
+): Promise<void> {
+  return invoke("open_file", { deviceId, filePath });
+}
