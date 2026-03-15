@@ -4,7 +4,7 @@ use std::time::SystemTime;
 
 use tauri::ipc::Channel;
 use tokio_util::sync::CancellationToken;
-use walkdir::WalkDir;
+use ignore::WalkBuilder;
 
 use crate::db::{self, DbPool};
 use crate::devices;
@@ -29,11 +29,15 @@ pub async fn analyze_sd_card(
         .map(|v| v.label.clone())
         .unwrap_or_else(|| "SD Card".to_string());
 
-    let files: Vec<PathBuf> = WalkDir::new(&sd_mount)
-        .into_iter()
+    let files: Vec<PathBuf> = WalkBuilder::new(&sd_mount)
+        .hidden(true)
+        .git_ignore(false)
+        .git_global(false)
+        .git_exclude(false)
+        .add_custom_ignore_filename(".openfileignore")
+        .build()
         .filter_map(|e| e.ok())
-        .filter(|e| e.file_type().is_file())
-        .filter(|e| !e.file_name().to_string_lossy().starts_with('.'))
+        .filter(|e| e.file_type().map_or(false, |ft| ft.is_file()))
         .map(|e| e.into_path())
         .collect();
 

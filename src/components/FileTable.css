@@ -129,9 +129,14 @@
   cursor: pointer;
 }
 
-.btn-delete-copy:hover {
+.btn-delete-copy:hover:not(:disabled) {
   background: var(--danger);
   color: white;
+}
+
+.btn-delete-copy:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
 }
 
 /* File preview */

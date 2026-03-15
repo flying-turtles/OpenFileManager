@@ -483,17 +483,17 @@ pub async fn get_duplicate_files_page(
     Ok((results, total, has_more))
 }
 
-pub async fn delete_file_location(pool: &DbPool, location_id: i64) -> Result<String, AppError> {
-    let loc = sqlx::query_as::<_, FileLocation>(
+pub async fn get_file_location_by_id(pool: &DbPool, location_id: i64) -> Result<FileLocation, AppError> {
+    sqlx::query_as::<_, FileLocation>(
         "SELECT * FROM file_locations WHERE id = ?"
     )
     .bind(location_id)
     .fetch_optional(pool)
     .await?
-    .ok_or_else(|| AppError::General(format!("Location {} not found", location_id)))?;
+    .ok_or_else(|| AppError::General(format!("Location {} not found", location_id)))
+}
 
-    let file_path = loc.file_path.clone();
-
+pub async fn delete_file_location(pool: &DbPool, location_id: i64) -> Result<(), AppError> {
     sqlx::query("DELETE FROM file_locations WHERE id = ?")
         .bind(location_id)
         .execute(pool)
@@ -501,7 +501,7 @@ pub async fn delete_file_location(pool: &DbPool, location_id: i64) -> Result<Str
 
     cleanup_orphaned_files(pool).await?;
 
-    Ok(file_path)
+    Ok(())
 }
 
 pub async fn get_waste_candidates(pool: &DbPool, threshold: i64) -> Result<Vec<WasteCandidate>, AppError> {

@@ -6,7 +6,7 @@ use std::time::SystemTime;
 use futures::stream::{self, StreamExt};
 use tauri::ipc::Channel;
 use tokio_util::sync::CancellationToken;
-use walkdir::WalkDir;
+use ignore::WalkBuilder;
 
 use crate::db::{self, DbPool};
 use crate::devices::{detect_volumes, device_for_path, FILEMANAGER_ID_FILE};
@@ -66,14 +66,15 @@ pub async fn run_scan(
         .ok_or_else(|| AppError::General(format!("No device found for path: {}", target_str)))?;
 
     // Enumerate files first
-    let files: Vec<PathBuf> = WalkDir::new(&target)
-        .into_iter()
-        .filter_entry(|e| {
-            !e.file_name().to_string_lossy().starts_with('.')
-                || e.path() == target.as_path()
-        })
+    let files: Vec<PathBuf> = WalkBuilder::new(&target)
+        .hidden(true)
+        .git_ignore(false)
+        .git_global(false)
+        .git_exclude(false)
+        .add_custom_ignore_filename(".openfileignore")
+        .build()
         .filter_map(|e| e.ok())
-        .filter(|e| e.file_type().is_file())
+        .filter(|e| e.file_type().map_or(false, |ft| ft.is_file()))
         .filter(|e| e.file_name().to_string_lossy() != FILEMANAGER_ID_FILE)
         .map(|e| e.into_path())
         .collect();

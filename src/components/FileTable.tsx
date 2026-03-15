@@ -201,6 +201,8 @@ export function FileTable({ files, totalCount, deviceNames, connectedDeviceIds, 
                                   {onDeleteLocation && (
                                     <button
                                       className="btn-delete-copy"
+                                      disabled={!connected}
+                                      title={connected ? "Delete this copy" : "Device not connected"}
                                       onClick={(e) => {
                                         e.stopPropagation();
                                         setConfirmDelete({ id: loc.id, path: loc.filePath });

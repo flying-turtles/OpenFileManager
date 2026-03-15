@@ -66,12 +66,17 @@ pub async fn delete_file_copy(
     state: State<'_, AppState>,
     location_id: i64,
 ) -> Result<(), AppError> {
-    let file_path = db::delete_file_location(&state.pool, location_id).await?;
+    let loc = db::get_file_location_by_id(&state.pool, location_id).await?;
+    let device = db::get_device(&state.pool, &loc.device_id).await?;
+    let full_path = std::path::Path::new(&device.mount_point).join(&loc.file_path);
 
-    let path = std::path::Path::new(&file_path);
-    if path.exists() {
-        tokio::fs::remove_file(path).await?;
+    tokio::fs::remove_file(&full_path).await?;
+
+    if full_path.exists() {
+        return Err(AppError::General("File still exists after deletion".into()));
     }
+
+    db::delete_file_location(&state.pool, location_id).await?;
 
     Ok(())
 }
