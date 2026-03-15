@@ -217,6 +217,21 @@ pub struct NetworkDrive {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BulkDeleteResult {
+    pub succeeded: Vec<i64>,
+    pub failed: Vec<BulkDeleteError>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BulkDeleteError {
+    pub location_id: i64,
+    pub file_path: String,
+    pub error: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum ImportEvent {
     #[serde(rename_all = "camelCase")]
     AnalysisStarted { total_files: u64 },

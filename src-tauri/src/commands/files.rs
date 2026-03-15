@@ -149,3 +149,48 @@ pub async fn get_file_locations(
 pub async fn get_dashboard_stats(state: State<'_, AppState>) -> Result<DashboardStats, AppError> {
     db::get_dashboard_stats(&state.pool).await
 }
+
+#[tauri::command]
+pub async fn bulk_delete_file_copies(
+    state: State<'_, AppState>,
+    location_ids: Vec<i64>,
+) -> Result<BulkDeleteResult, AppError> {
+    let mut succeeded = Vec::new();
+    let mut failed = Vec::new();
+
+    for id in location_ids {
+        let result: Result<(), AppError> = async {
+            let loc = db::get_file_location_by_id(&state.pool, id).await?;
+            let device = db::get_device(&state.pool, &loc.device_id).await?;
+            let full_path = std::path::Path::new(&device.mount_point).join(&loc.file_path);
+            tokio::fs::remove_file(&full_path).await?;
+            if full_path.exists() {
+                return Err(AppError::General("File still exists after deletion".into()));
+            }
+            db::delete_file_location_no_cleanup(&state.pool, id).await?;
+            Ok(())
+        }
+        .await;
+
+        match result {
+            Ok(()) => succeeded.push(id),
+            Err(e) => {
+                let path = db::get_file_location_by_id(&state.pool, id)
+                    .await
+                    .map(|l| l.file_path)
+                    .unwrap_or_default();
+                failed.push(BulkDeleteError {
+                    location_id: id,
+                    file_path: path,
+                    error: e.to_string(),
+                });
+            }
+        }
+    }
+
+    if !succeeded.is_empty() {
+        let _ = db::cleanup_orphaned_files(&state.pool).await;
+    }
+
+    Ok(BulkDeleteResult { succeeded, failed })
+}

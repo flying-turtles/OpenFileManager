@@ -162,6 +162,17 @@ export interface DeviceCopyProgress {
   currentFile: string;
 }
 
+export interface BulkDeleteResult {
+  succeeded: number[];
+  failed: BulkDeleteError[];
+}
+
+export interface BulkDeleteError {
+  locationId: number;
+  filePath: string;
+  error: string;
+}
+
 export type ImportEvent =
   | { AnalysisStarted: { totalFiles: number } }
   | { AnalysisProgress: { processed: number; total: number } }

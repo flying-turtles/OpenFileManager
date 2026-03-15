@@ -14,6 +14,7 @@ import type {
   PendingScan,
   FilePageResult,
   UnsafeFilePageResult,
+  BulkDeleteResult,
 } from "../types";
 
 export async function detectDevices(): Promise<StorageDevice[]> {
@@ -101,6 +102,12 @@ export async function getDuplicateFilesPage(
 
 export async function deleteFileCopy(locationId: number): Promise<void> {
   return invoke("delete_file_copy", { locationId });
+}
+
+export async function bulkDeleteFileCopies(
+  locationIds: number[]
+): Promise<BulkDeleteResult> {
+  return invoke("bulk_delete_file_copies", { locationIds });
 }
 
 export async function getFileSafety(

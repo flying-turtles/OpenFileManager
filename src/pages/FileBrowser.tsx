@@ -2,6 +2,7 @@ import { useEffect, useState, useMemo } from "react";
 import { useDevices } from "../hooks/useDevices";
 import { useFiles } from "../hooks/useFiles";
 import { FileTable } from "../components/FileTable";
+import { BulkDeleteModal } from "../components/BulkDeleteModal";
 import type { FileLocation } from "../types";
 
 type SortKey = "name" | "size" | "modified";
@@ -27,7 +28,7 @@ export function FileBrowser() {
   const {
     files, unsafeFiles, safeFiles, duplicateFiles, loading, totalCount,
     loadDeviceFiles, loadUnsafeFiles, loadSafeFiles, loadDuplicateFiles,
-    deleteFileCopy, loadFileSafety,
+    deleteFileCopy, bulkDeleteCopies, loadFileSafety,
   } = useFiles();
   const [selectedDevice, setSelectedDevice] = useState("");
   const [filter, setFilter] = useState<FilterMode>("all");
@@ -35,6 +36,7 @@ export function FileBrowser() {
   const [sortKey, setSortKey] = useState<SortKey>("name");
   const [sortDir, setSortDir] = useState<SortDir>("asc");
   const [dupDeviceFilter, setDupDeviceFilter] = useState("");
+  const [showBulkDelete, setShowBulkDelete] = useState(false);
 
   const deviceNames = useMemo(() => {
     const map: Record<string, string> = {};
@@ -45,6 +47,31 @@ export function FileBrowser() {
   const connectedDeviceIds = useMemo(
     () => new Set(devices.filter((d) => d.isConnected).map((d) => d.id)),
     [devices],
+  );
+
+  const bulkDeleteTargets: FileLocation[] = useMemo(() => {
+    if (filter !== "duplicates" || !dupDeviceFilter) return [];
+    return duplicateFiles.flatMap((sf) =>
+      sf.locations.filter((l) => {
+        if (l.deviceId !== dupDeviceFilter) return false;
+        if (extFilter) {
+          const dot = l.fileName.lastIndexOf(".");
+          const ext = dot > 0 ? l.fileName.slice(dot + 1).toLowerCase() : "";
+          if (ext !== extFilter) return false;
+        }
+        return true;
+      })
+    );
+  }, [duplicateFiles, dupDeviceFilter, extFilter, filter]);
+
+  const bulkDeleteDeviceName = useMemo(() => {
+    const d = devices.find((d) => d.id === dupDeviceFilter);
+    return d?.label ?? "";
+  }, [devices, dupDeviceFilter]);
+
+  const bulkDeleteDeviceConnected = useMemo(
+    () => connectedDeviceIds.has(dupDeviceFilter),
+    [connectedDeviceIds, dupDeviceFilter],
   );
 
   useEffect(() => {
@@ -150,17 +177,24 @@ export function FileBrowser() {
           </select>
         )}
         {filter === "duplicates" && (
-          <select
-            value={dupDeviceFilter}
-            onChange={(e) => setDupDeviceFilter(e.target.value)}
-          >
-            <option value="">All devices</option>
-            {devices.filter((d) => d.isConnected).map((d) => (
-              <option key={d.id} value={d.id}>
-                {d.label} ({d.mountPoint})
-              </option>
-            ))}
-          </select>
+          <>
+            <select
+              value={dupDeviceFilter}
+              onChange={(e) => setDupDeviceFilter(e.target.value)}
+            >
+              <option value="">All devices</option>
+              {devices.filter((d) => d.isConnected).map((d) => (
+                <option key={d.id} value={d.id}>
+                  {d.label} ({d.mountPoint})
+                </option>
+              ))}
+            </select>
+            {bulkDeleteTargets.length > 0 && bulkDeleteDeviceConnected && (
+              <button className="btn-danger" onClick={() => setShowBulkDelete(true)}>
+                Bulk Delete ({bulkDeleteTargets.length})
+              </button>
+            )}
+          </>
         )}
       </div>
 
@@ -224,6 +258,15 @@ export function FileBrowser() {
 
       {!loading && displayFiles.length === 0 && (
         <p className="empty">{emptyMsg}</p>
+      )}
+
+      {showBulkDelete && (
+        <BulkDeleteModal
+          deviceName={bulkDeleteDeviceName}
+          files={bulkDeleteTargets}
+          onConfirm={bulkDeleteCopies}
+          onClose={() => setShowBulkDelete(false)}
+        />
       )}
     </div>
   );

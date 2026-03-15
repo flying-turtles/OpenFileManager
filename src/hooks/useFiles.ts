@@ -1,11 +1,12 @@
 import { useState, useCallback, useRef } from "react";
-import type { FileLocation, FileSafety, WasteCandidate } from "../types";
+import type { FileLocation, FileSafety, WasteCandidate, BulkDeleteResult } from "../types";
 import {
   getFilesOnDevicePage,
   getUnsafeFilesPage,
   getSafeFilesPage,
   getDuplicateFilesPage,
   deleteFileCopy as deleteFileCopyApi,
+  bulkDeleteFileCopies,
   getWasteCandidates,
   getFileSafety,
   getFileLocations,
@@ -145,6 +146,21 @@ export function useFiles() {
     );
   }, []);
 
+  const bulkDeleteCopies = useCallback(async (locationIds: number[]): Promise<BulkDeleteResult> => {
+    const result = await bulkDeleteFileCopies(locationIds);
+    const succeededSet = new Set(result.succeeded);
+    setDuplicateFiles((prev) =>
+      prev
+        .map((sf) => ({
+          ...sf,
+          totalCopies: sf.totalCopies - sf.locations.filter((l) => succeededSet.has(l.id)).length,
+          locations: sf.locations.filter((l) => !succeededSet.has(l.id)),
+        }))
+        .filter((sf) => sf.locations.length > 0)
+    );
+    return result;
+  }, []);
+
   const loadWaste = useCallback(async (threshold?: number) => {
     setLoading(true);
     try {
@@ -176,6 +192,7 @@ export function useFiles() {
     loadSafeFiles,
     loadDuplicateFiles,
     deleteFileCopy,
+    bulkDeleteCopies,
     loadWaste,
     loadFileSafety,
     loadLocations,

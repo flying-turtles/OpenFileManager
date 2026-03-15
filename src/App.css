@@ -661,3 +661,34 @@ select:focus-visible {
   background: var(--bg-hover);
   color: var(--text);
 }
+
+.bulk-delete-file-list {
+  max-height: 300px;
+  overflow-y: auto;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 8px;
+  margin: 12px 0;
+}
+
+.bulk-delete-file-item {
+  display: flex;
+  flex-direction: column;
+  padding: 4px 0;
+  border-bottom: 1px solid var(--border);
+  font-size: 13px;
+}
+
+.bulk-delete-file-item:last-child {
+  border-bottom: none;
+}
+
+.bulk-delete-file-path {
+  word-break: break-all;
+  color: var(--text);
+}
+
+.bulk-delete-warning {
+  color: var(--danger);
+  font-weight: 600;
+}

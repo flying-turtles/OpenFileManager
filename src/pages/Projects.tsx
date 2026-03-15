@@ -2,8 +2,9 @@ import { useEffect, useState, useMemo } from "react";
 import { useProjects } from "../hooks/useProjects";
 import { useDevices } from "../hooks/useDevices";
 import { FileTable } from "../components/FileTable";
-import { getFileSafety, deleteFileCopy } from "../api/commands";
-import type { Project, FileLocation, FileSafety } from "../types";
+import { BulkDeleteModal } from "../components/BulkDeleteModal";
+import { getFileSafety, deleteFileCopy, bulkDeleteFileCopies } from "../api/commands";
+import type { Project, FileLocation, FileSafety, BulkDeleteResult } from "../types";
 import "./Projects.css";
 
 function formatBytes(bytes: number): string {
@@ -51,6 +52,7 @@ export function Projects() {
   const [sortDir, setSortDir] = useState<SortDir>("asc");
   const [projectFiles, setProjectFiles] = useState<FileSafety[]>([]);
   const [dupDeviceFilter, setDupDeviceFilter] = useState("");
+  const [showBulkDelete, setShowBulkDelete] = useState(false);
 
   useEffect(() => {
     refresh();
@@ -130,6 +132,48 @@ export function Projects() {
         .filter((sf) => sf.locations.length > 0)
     );
   };
+
+  const handleBulkDelete = async (locationIds: number[]): Promise<BulkDeleteResult> => {
+    const result = await bulkDeleteFileCopies(locationIds);
+    const succeededSet = new Set(result.succeeded);
+    setProjectFiles((prev) =>
+      prev
+        .map((sf) => ({
+          ...sf,
+          totalCopies: sf.totalCopies - sf.locations.filter((l) => succeededSet.has(l.id)).length,
+          locations: sf.locations.filter((l) => !succeededSet.has(l.id)),
+        }))
+        .filter((sf) => sf.locations.length > 0)
+    );
+    return result;
+  };
+
+  const bulkDeleteTargets: FileLocation[] = useMemo(() => {
+    if (safetyFilter !== "duplicates" || !dupDeviceFilter) return [];
+    return projectFiles
+      .filter((sf) => sf.totalCopies > 2)
+      .flatMap((sf) =>
+        sf.locations.filter((l) => {
+          if (l.deviceId !== dupDeviceFilter) return false;
+          if (extFilter) {
+            const dot = l.fileName.lastIndexOf(".");
+            const ext = dot > 0 ? l.fileName.slice(dot + 1).toLowerCase() : "";
+            if (ext !== extFilter) return false;
+          }
+          return true;
+        })
+      );
+  }, [projectFiles, dupDeviceFilter, extFilter, safetyFilter]);
+
+  const bulkDeleteDeviceName = useMemo(() => {
+    const d = devices.find((d) => d.id === dupDeviceFilter);
+    return d?.label ?? "";
+  }, [devices, dupDeviceFilter]);
+
+  const bulkDeleteDeviceConnected = useMemo(
+    () => connectedDeviceIds.has(dupDeviceFilter),
+    [connectedDeviceIds, dupDeviceFilter],
+  );
 
   // Filter project files by safety status
   const filteredSafetyFiles: FileSafety[] = useMemo(() => {
@@ -281,17 +325,24 @@ export function Projects() {
             </button>
           </div>
           {safetyFilter === "duplicates" && (
-            <select
-              value={dupDeviceFilter}
-              onChange={(e) => setDupDeviceFilter(e.target.value)}
-            >
-              <option value="">All devices</option>
-              {devices.filter((d) => d.isConnected).map((d) => (
-                <option key={d.id} value={d.id}>
-                  {d.label} ({d.mountPoint})
-                </option>
-              ))}
-            </select>
+            <>
+              <select
+                value={dupDeviceFilter}
+                onChange={(e) => setDupDeviceFilter(e.target.value)}
+              >
+                <option value="">All devices</option>
+                {devices.filter((d) => d.isConnected).map((d) => (
+                  <option key={d.id} value={d.id}>
+                    {d.label} ({d.mountPoint})
+                  </option>
+                ))}
+              </select>
+              {bulkDeleteTargets.length > 0 && bulkDeleteDeviceConnected && (
+                <button className="btn-danger" onClick={() => setShowBulkDelete(true)}>
+                  Bulk Delete ({bulkDeleteTargets.length})
+                </button>
+              )}
+            </>
           )}
         </div>
 
@@ -351,6 +402,15 @@ export function Projects() {
                   ? "No unsafe files"
                   : "No files with more than 2 copies"}
           </p>
+        )}
+
+        {showBulkDelete && (
+          <BulkDeleteModal
+            deviceName={bulkDeleteDeviceName}
+            files={bulkDeleteTargets}
+            onConfirm={handleBulkDelete}
+            onClose={() => setShowBulkDelete(false)}
+          />
         )}
       </div>
     );

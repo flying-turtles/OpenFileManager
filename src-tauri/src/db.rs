@@ -543,6 +543,14 @@ pub async fn delete_file_location(pool: &DbPool, location_id: i64) -> Result<(),
     Ok(())
 }
 
+pub async fn delete_file_location_no_cleanup(pool: &DbPool, location_id: i64) -> Result<(), AppError> {
+    sqlx::query("DELETE FROM file_locations WHERE id = ?")
+        .bind(location_id)
+        .execute(pool)
+        .await?;
+    Ok(())
+}
+
 pub async fn get_waste_candidates(pool: &DbPool, threshold: i64) -> Result<Vec<WasteCandidate>, AppError> {
     let rows = sqlx::query_as::<_, WasteCandidate>(
         "SELECT f.blake3_hash, f.file_size, f.representative_name,

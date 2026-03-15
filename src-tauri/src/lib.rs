@@ -72,6 +72,7 @@ pub fn run() {
             commands::get_safe_files_page,
             commands::get_duplicate_files_page,
             commands::delete_file_copy,
+            commands::bulk_delete_file_copies,
             commands::get_waste_candidates,
             commands::browse_directory,
             commands::get_file_locations,
