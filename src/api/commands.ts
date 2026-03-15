@@ -224,3 +224,17 @@ export async function unmountNetworkDrive(driveId: string): Promise<void> {
 export async function removeNetworkDrive(driveId: string): Promise<void> {
   return invoke("remove_network_drive", { driveId });
 }
+
+export async function resolveFilePath(
+  deviceId: string,
+  filePath: string
+): Promise<string> {
+  return invoke("resolve_file_path", { deviceId, filePath });
+}
+
+export async function getThumbnail(
+  path: string,
+  maxSize?: number
+): Promise<string> {
+  return invoke("get_thumbnail", { path, maxSize });
+}

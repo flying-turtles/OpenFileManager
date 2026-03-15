@@ -75,6 +75,14 @@ pub async fn get_all_devices(pool: &DbPool) -> Result<Vec<StorageDevice>, AppErr
     Ok(devices)
 }
 
+pub async fn get_device(pool: &DbPool, id: &str) -> Result<StorageDevice, AppError> {
+    let device = sqlx::query_as::<_, StorageDevice>("SELECT * FROM storage_devices WHERE id = ?")
+        .bind(id)
+        .fetch_one(pool)
+        .await?;
+    Ok(device)
+}
+
 pub async fn set_device_type(pool: &DbPool, device_id: &str, device_type: &str) -> Result<(), AppError> {
     sqlx::query("UPDATE storage_devices SET device_type = ? WHERE id = ?")
         .bind(device_type)

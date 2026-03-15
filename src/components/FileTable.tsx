@@ -2,6 +2,7 @@ import { useState, useRef, useMemo } from "react";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import type { FileLocation, FileSafety } from "../types";
 import { SafetyBadge } from "./SafetyBadge";
+import { FilePreview } from "./FilePreview";
 import "./FileTable.css";
 
 function formatBytes(bytes: number): string {
@@ -20,11 +21,12 @@ interface Props {
   files: FileLocation[];
   totalCount?: number;
   deviceNames?: Record<string, string>;
+  selectedDeviceId?: string;
   onGetSafety?: (hash: string) => Promise<FileSafety | null>;
   onDeleteLocation?: (locationId: number, filePath: string) => Promise<void>;
 }
 
-export function FileTable({ files, totalCount, deviceNames, onGetSafety, onDeleteLocation }: Props) {
+export function FileTable({ files, totalCount, deviceNames, selectedDeviceId, onGetSafety, onDeleteLocation }: Props) {
   const [expandedId, setExpandedId] = useState<number | null>(null);
   const [safety, setSafety] = useState<FileSafety | null>(null);
   const [confirmDelete, setConfirmDelete] = useState<{ id: number; path: string } | null>(null);
@@ -83,7 +85,7 @@ export function FileTable({ files, totalCount, deviceNames, onGetSafety, onDelet
   const virtualizer = useVirtualizer({
     count: rows.length,
     getScrollElement: () => parentRef.current,
-    estimateSize: (i) => (rows[i]?.type === "detail" ? 120 : 36),
+    estimateSize: (i) => (rows[i]?.type === "detail" ? 320 : 36),
     overscan: 20,
   });
 
@@ -135,6 +137,11 @@ export function FileTable({ files, totalCount, deviceNames, onGetSafety, onDelet
                     data-index={virtualRow.index}
                   >
                     <td colSpan={5}>
+                      <FilePreview
+                        locations={row.safety.locations}
+                        fileName={row.file.fileName}
+                        preferredDeviceId={selectedDeviceId}
+                      />
                       <div className="safety-detail">
                         <SafetyBadge
                           totalCopies={row.safety.totalCopies}

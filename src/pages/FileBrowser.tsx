@@ -195,6 +195,7 @@ export function FileBrowser() {
           files={displayFiles}
           totalCount={extFilter ? undefined : totalCount}
           deviceNames={deviceNames}
+          selectedDeviceId={filter === "all" ? selectedDevice : undefined}
           onGetSafety={loadFileSafety}
           onDeleteLocation={filter === "duplicates" ? deleteFileCopy : undefined}
         />

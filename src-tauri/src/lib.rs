@@ -91,6 +91,8 @@ pub fn run() {
             commands::unmount_network_drive,
             commands::remove_network_drive,
             commands::add_location,
+            commands::resolve_file_path,
+            commands::get_thumbnail,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

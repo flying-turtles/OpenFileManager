@@ -2,6 +2,7 @@ mod devices;
 mod files;
 mod import;
 mod network;
+mod preview;
 mod projects;
 mod scan;
 
@@ -36,5 +37,6 @@ pub use devices::*;
 pub use files::*;
 pub use import::*;
 pub use network::*;
+pub use preview::*;
 pub use projects::*;
 pub use scan::*;
