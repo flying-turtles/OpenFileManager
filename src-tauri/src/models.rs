@@ -232,6 +232,17 @@ pub struct BulkDeleteError {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum BulkDeleteEvent {
+    #[serde(rename_all = "camelCase")]
+    Progress {
+        processed: u64,
+        total: u64,
+        current_file: String,
+    },
+    Complete(BulkDeleteResult),
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum ImportEvent {
     #[serde(rename_all = "camelCase")]
     AnalysisStarted { total_files: u64 },

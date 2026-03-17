@@ -1,11 +1,11 @@
 import { useState } from "react";
 import { useFocusTrap } from "../hooks/useFocusTrap";
-import type { FileLocation, BulkDeleteResult } from "../types";
+import type { FileLocation, BulkDeleteResult, BulkDeleteEvent } from "../types";
 
 interface Props {
   deviceName: string;
   files: FileLocation[];
-  onConfirm: (locationIds: number[]) => Promise<BulkDeleteResult>;
+  onConfirm: (locationIds: number[], onEvent: (event: BulkDeleteEvent) => void) => Promise<BulkDeleteResult>;
   onClose: () => void;
 }
 
@@ -14,13 +14,24 @@ export function BulkDeleteModal({ deviceName, files, onConfirm, onClose }: Props
   const [confirmText, setConfirmText] = useState("");
   const [deleting, setDeleting] = useState(false);
   const [result, setResult] = useState<BulkDeleteResult | null>(null);
+  const [processed, setProcessed] = useState(0);
+  const [currentFile, setCurrentFile] = useState("");
 
   const canDelete = confirmText === deviceName;
+  const total = files.length;
+  const pct = total > 0 ? Math.round((processed / total) * 100) : 0;
 
   const handleDelete = async () => {
     setDeleting(true);
+    setProcessed(0);
+    setCurrentFile("");
     try {
-      const res = await onConfirm(files.map((f) => f.id));
+      const res = await onConfirm(files.map((f) => f.id), (event) => {
+        if ("Progress" in event) {
+          setProcessed(event.Progress.processed);
+          setCurrentFile(event.Progress.currentFile);
+        }
+      });
       setResult(res);
     } catch (e: any) {
       setResult({ succeeded: [], failed: [{ locationId: 0, filePath: "", error: e.toString() }] });
@@ -53,6 +64,20 @@ export function BulkDeleteModal({ deviceName, files, onConfirm, onClose }: Props
               <button className="btn-primary" onClick={onClose}>Close</button>
             </div>
           </>
+        ) : deleting ? (
+          <>
+            <h2>Deleting files...</h2>
+            <div className="progress-container">
+              <div className="progress-bar">
+                <div className="progress-fill" style={{ width: `${pct}%` }} />
+              </div>
+              <div className="progress-stats">
+                <span>{processed} / {total} files</span>
+                <span>{pct}%</span>
+              </div>
+              {currentFile && <div className="progress-file">{currentFile}</div>}
+            </div>
+          </>
         ) : (
           <>
             <h2>Bulk Delete from {deviceName}</h2>
@@ -73,14 +98,13 @@ export function BulkDeleteModal({ deviceName, files, onConfirm, onClose }: Props
                 value={confirmText}
                 onChange={(e) => setConfirmText(e.target.value)}
                 placeholder={deviceName}
-                disabled={deleting}
                 autoFocus
               />
             </div>
             <div className="form-actions">
-              <button onClick={onClose} disabled={deleting}>Cancel</button>
-              <button className="btn-danger" onClick={handleDelete} disabled={!canDelete || deleting}>
-                {deleting ? "Deleting..." : `Delete All (${files.length})`}
+              <button onClick={onClose}>Cancel</button>
+              <button className="btn-danger" onClick={handleDelete} disabled={!canDelete}>
+                Delete All ({files.length})
               </button>
             </div>
           </>

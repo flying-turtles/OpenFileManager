@@ -1,5 +1,5 @@
 import { useState, useCallback, useRef } from "react";
-import type { FileLocation, FileSafety, WasteCandidate, BulkDeleteResult } from "../types";
+import type { FileLocation, FileSafety, WasteCandidate, BulkDeleteResult, BulkDeleteEvent } from "../types";
 import {
   getFilesOnDevicePage,
   getUnsafeFilesPage,
@@ -146,8 +146,11 @@ export function useFiles() {
     );
   }, []);
 
-  const bulkDeleteCopies = useCallback(async (locationIds: number[]): Promise<BulkDeleteResult> => {
-    const result = await bulkDeleteFileCopies(locationIds);
+  const bulkDeleteCopies = useCallback(async (
+    locationIds: number[],
+    onEvent?: (event: BulkDeleteEvent) => void
+  ): Promise<BulkDeleteResult> => {
+    const result = await bulkDeleteFileCopies(locationIds, onEvent ?? (() => {}));
     const succeededSet = new Set(result.succeeded);
     setDuplicateFiles((prev) =>
       prev

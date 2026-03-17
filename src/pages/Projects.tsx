@@ -4,7 +4,7 @@ import { useDevices } from "../hooks/useDevices";
 import { FileTable } from "../components/FileTable";
 import { BulkDeleteModal } from "../components/BulkDeleteModal";
 import { getFileSafety, deleteFileCopy, bulkDeleteFileCopies } from "../api/commands";
-import type { Project, FileLocation, FileSafety, BulkDeleteResult } from "../types";
+import type { Project, FileLocation, FileSafety, BulkDeleteResult, BulkDeleteEvent } from "../types";
 import "./Projects.css";
 
 function formatBytes(bytes: number): string {
@@ -133,8 +133,8 @@ export function Projects() {
     );
   };
 
-  const handleBulkDelete = async (locationIds: number[]): Promise<BulkDeleteResult> => {
-    const result = await bulkDeleteFileCopies(locationIds);
+  const handleBulkDelete = async (locationIds: number[], onEvent: (event: BulkDeleteEvent) => void): Promise<BulkDeleteResult> => {
+    const result = await bulkDeleteFileCopies(locationIds, onEvent);
     const succeededSet = new Set(result.succeeded);
     setProjectFiles((prev) =>
       prev

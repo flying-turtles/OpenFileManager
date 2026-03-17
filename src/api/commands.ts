@@ -15,6 +15,7 @@ import type {
   FilePageResult,
   UnsafeFilePageResult,
   BulkDeleteResult,
+  BulkDeleteEvent,
 } from "../types";
 
 export async function detectDevices(): Promise<StorageDevice[]> {
@@ -105,9 +106,12 @@ export async function deleteFileCopy(locationId: number): Promise<void> {
 }
 
 export async function bulkDeleteFileCopies(
-  locationIds: number[]
+  locationIds: number[],
+  onEvent: (event: BulkDeleteEvent) => void
 ): Promise<BulkDeleteResult> {
-  return invoke("bulk_delete_file_copies", { locationIds });
+  const channel = new Channel<BulkDeleteEvent>();
+  channel.onmessage = onEvent;
+  return invoke("bulk_delete_file_copies", { locationIds, onEvent: channel });
 }
 
 export async function getFileSafety(

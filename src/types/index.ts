@@ -173,6 +173,10 @@ export interface BulkDeleteError {
   error: string;
 }
 
+export type BulkDeleteEvent =
+  | { Progress: { processed: number; total: number; currentFile: string } }
+  | { Complete: BulkDeleteResult };
+
 export type ImportEvent =
   | { AnalysisStarted: { totalFiles: number } }
   | { AnalysisProgress: { processed: number; total: number } }

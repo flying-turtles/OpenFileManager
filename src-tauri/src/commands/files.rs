@@ -1,5 +1,6 @@
 use std::path::PathBuf;
 
+use tauri::ipc::Channel;
 use tauri::State;
 
 use super::AppState;
@@ -154,11 +155,26 @@ pub async fn get_dashboard_stats(state: State<'_, AppState>) -> Result<Dashboard
 pub async fn bulk_delete_file_copies(
     state: State<'_, AppState>,
     location_ids: Vec<i64>,
+    on_event: Channel<BulkDeleteEvent>,
 ) -> Result<BulkDeleteResult, AppError> {
     let mut succeeded = Vec::new();
     let mut failed = Vec::new();
+    let total = location_ids.len() as u64;
 
-    for id in location_ids {
+    for (i, id) in location_ids.iter().enumerate() {
+        let id = *id;
+        // Look up file path before attempting delete for progress reporting
+        let file_path = db::get_file_location_by_id(&state.pool, id)
+            .await
+            .map(|l| l.file_path.clone())
+            .unwrap_or_default();
+
+        let _ = on_event.send(BulkDeleteEvent::Progress {
+            processed: i as u64,
+            total,
+            current_file: file_path.clone(),
+        });
+
         let result: Result<(), AppError> = async {
             let loc = db::get_file_location_by_id(&state.pool, id).await?;
             let device = db::get_device(&state.pool, &loc.device_id).await?;
@@ -175,13 +191,9 @@ pub async fn bulk_delete_file_copies(
         match result {
             Ok(()) => succeeded.push(id),
             Err(e) => {
-                let path = db::get_file_location_by_id(&state.pool, id)
-                    .await
-                    .map(|l| l.file_path)
-                    .unwrap_or_default();
                 failed.push(BulkDeleteError {
                     location_id: id,
-                    file_path: path,
+                    file_path,
                     error: e.to_string(),
                 });
             }
@@ -192,5 +204,7 @@ pub async fn bulk_delete_file_copies(
         let _ = db::cleanup_orphaned_files(&state.pool).await;
     }
 
-    Ok(BulkDeleteResult { succeeded, failed })
+    let result = BulkDeleteResult { succeeded, failed };
+    let _ = on_event.send(BulkDeleteEvent::Complete(result.clone()));
+    Ok(result)
 }
