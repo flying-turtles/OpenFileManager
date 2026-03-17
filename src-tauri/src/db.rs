@@ -55,6 +55,7 @@ pub async fn upsert_device(pool: &DbPool, disk: &DetectedDisk) -> Result<(), App
            mount_point = excluded.mount_point,
            total_bytes = excluded.total_bytes,
            available_bytes = excluded.available_bytes,
+           is_removable = excluded.is_removable,
            last_seen = datetime('now')"
     )
     .bind(&disk.id)

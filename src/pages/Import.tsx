@@ -37,7 +37,7 @@ export function Import() {
   }, [phase]);
 
   const removableDevices = devices.filter(
-    (d) => d.isConnected && d.isRemovable
+    (d) => d.isConnected && d.mountPoint !== "/"
   );
   const targetDevices = devices.filter(
     (d) => d.isConnected && d.id !== analysis?.sdDeviceId

@@ -306,6 +306,10 @@ select:focus-visible {
   letter-spacing: 0.5px;
 }
 
+.form-group label strong {
+  text-transform: none;
+}
+
 .form-group input {
   width: 100%;
 }
