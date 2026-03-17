@@ -15,7 +15,26 @@ pub async fn detect_devices(state: State<'_, AppState>) -> Result<Vec<StorageDev
     for disk in &disks {
         db::upsert_device(&state.pool, disk).await?;
     }
-    let all = db::get_all_devices(&state.pool).await?;
+    let mut all = db::get_all_devices(&state.pool).await?;
+    // For manually-added locations not covered by detect_volumes,
+    // only store available_bytes (total is unreliable for SMB/subfolder paths)
+    for dev in &mut all {
+        if connected_ids.contains(&dev.id) || !std::path::Path::new(&dev.mount_point).exists() {
+            continue;
+        }
+        let (_, avail) = devices::disk_space_for_path(&dev.mount_point);
+        dev.total_bytes = 0;
+        dev.available_bytes = avail;
+        let updated = DetectedDisk {
+            id: dev.id.clone(),
+            label: dev.label.clone(),
+            mount_point: dev.mount_point.clone(),
+            total_bytes: 0,
+            available_bytes: avail,
+            is_removable: dev.is_removable,
+        };
+        let _ = db::upsert_device(&state.pool, &updated).await;
+    }
     Ok(mark_connected(all, &connected_ids))
 }
 
@@ -75,12 +94,13 @@ pub async fn add_location(
     std::fs::write(&id_file, &id)
         .map_err(|e| AppError::General(format!("Failed to write {}: {}", id_file.display(), e)))?;
 
+    let (_, available_bytes) = devices::disk_space_for_path(&path);
     let disk = DetectedDisk {
         id: id.clone(),
         label,
         mount_point: path.clone(),
         total_bytes: 0,
-        available_bytes: 0,
+        available_bytes,
         is_removable: false,
     };
     db::upsert_device(&state.pool, &disk).await?;

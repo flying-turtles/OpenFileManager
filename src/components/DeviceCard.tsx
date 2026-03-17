@@ -2,7 +2,7 @@ import type { StorageDevice } from "../types";
 import "./DeviceCard.css";
 
 function formatBytes(bytes: number): string {
-  if (bytes === 0) return "0 B";
+  if (!bytes || bytes <= 0) return "0 B";
   const k = 1024;
   const sizes = ["B", "KB", "MB", "GB", "TB"];
   const i = Math.floor(Math.log(bytes) / Math.log(k));
@@ -17,8 +17,9 @@ interface Props {
 }
 
 export function DeviceCard({ device, onSetType, onScan, onRemove }: Props) {
-  const usedBytes = device.totalBytes - device.availableBytes;
-  const usedPct = device.totalBytes > 0 ? (usedBytes / device.totalBytes) * 100 : 0;
+  const hasTotal = device.totalBytes > 0;
+  const usedBytes = hasTotal ? device.totalBytes - device.availableBytes : 0;
+  const usedPct = hasTotal ? (usedBytes / device.totalBytes) * 100 : 0;
 
   const typeColors: Record<string, string> = {
     hot: "var(--type-hot)",
@@ -42,12 +43,22 @@ export function DeviceCard({ device, onSetType, onScan, onRemove }: Props) {
         </div>
       </div>
       <div className="device-mount">{device.mountPoint}</div>
-      <div className="capacity-bar">
-        <div className="capacity-used" style={{ width: `${usedPct}%` }} />
-      </div>
-      <div className="capacity-text">
-        {formatBytes(usedBytes)} / {formatBytes(device.totalBytes)}
-      </div>
+      {hasTotal ? (
+        <>
+          <div className="capacity-bar">
+            <div className="capacity-used" style={{ width: `${usedPct}%` }} />
+          </div>
+          <div className="capacity-text">
+            {formatBytes(usedBytes)} / {formatBytes(device.totalBytes)}
+          </div>
+        </>
+      ) : (
+        <div className="capacity-text">
+          {device.availableBytes > 0
+            ? `${formatBytes(device.availableBytes)} free`
+            : "Storage info unavailable"}
+        </div>
+      )}
       {device.isRemovable && <div className="removable-tag">Removable</div>}
       <div className="device-actions">
         <select

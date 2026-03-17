@@ -117,6 +117,26 @@ pub fn detect_volumes() -> Vec<DetectedDisk> {
     result
 }
 
+/// Returns (total_bytes, available_bytes) for the filesystem containing `path`.
+/// Uses statvfs which works for any path including SMB/NFS mounts.
+pub fn disk_space_for_path(path: &str) -> (i64, i64) {
+    use std::ffi::CString;
+    let c_path = match CString::new(path) {
+        Ok(p) => p,
+        Err(_) => return (0, 0),
+    };
+    unsafe {
+        let mut stat: libc::statvfs = std::mem::zeroed();
+        if libc::statvfs(c_path.as_ptr(), &mut stat) == 0 {
+            let total = stat.f_blocks as i64 * stat.f_frsize as i64;
+            let available = stat.f_bavail as i64 * stat.f_frsize as i64;
+            (total, available)
+        } else {
+            (0, 0)
+        }
+    }
+}
+
 /// Returns the device ID for a given path.
 /// First checks for a `.filemanagerid` file, then falls back to detected volumes.
 pub fn device_for_path(devices: &[DetectedDisk], path: &str) -> Option<(String, String)> {
