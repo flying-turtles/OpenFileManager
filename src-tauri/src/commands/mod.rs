@@ -5,6 +5,7 @@ mod network;
 mod preview;
 mod projects;
 mod scan;
+mod transfer;
 
 use std::sync::Arc;
 use std::collections::HashSet;
@@ -23,6 +24,7 @@ pub struct AppState {
     pub scan_target: Arc<Mutex<Option<String>>>,
     pub import_cancel_token: Arc<Mutex<Option<CancellationToken>>>,
     pub import_analysis: Arc<Mutex<Option<Arc<ImportAnalysis>>>>,
+    pub transfer_cancel_token: Arc<Mutex<Option<CancellationToken>>>,
 }
 
 fn mark_connected(mut devices: Vec<StorageDevice>, connected_ids: &HashSet<String>) -> Vec<StorageDevice> {
@@ -40,3 +42,4 @@ pub use network::*;
 pub use preview::*;
 pub use projects::*;
 pub use scan::*;
+pub use transfer::*;

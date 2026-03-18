@@ -8,6 +8,7 @@ export interface StorageDevice {
   isRemovable: boolean;
   firstSeen: string;
   lastSeen: string;
+  driveSpeed: string;
   isConnected: boolean;
 }
 
@@ -176,6 +177,27 @@ export interface BulkDeleteError {
 export type BulkDeleteEvent =
   | { Progress: { processed: number; total: number; currentFile: string } }
   | { Complete: BulkDeleteResult };
+
+export interface TransferCheck {
+  availableCount: number;
+  unavailableFiles: UnavailableFile[];
+  totalBytes: number;
+  alreadyOnTarget: number;
+}
+
+export interface UnavailableFile {
+  blake3Hash: string;
+  representativeName: string;
+  fileSize: number;
+}
+
+export type TransferEvent =
+  | { CheckComplete: TransferCheck }
+  | { CopyStarted: { totalFiles: number; totalBytes: number } }
+  | { CopyProgress: DeviceCopyProgress }
+  | "CopyComplete"
+  | { Error: { message: string } }
+  | "Cancelled";
 
 export type ImportEvent =
   | { AnalysisStarted: { totalFiles: number } }

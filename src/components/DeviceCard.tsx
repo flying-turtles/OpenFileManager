@@ -12,11 +12,12 @@ function formatBytes(bytes: number): string {
 interface Props {
   device: StorageDevice;
   onSetType: (deviceId: string, type_: string) => void;
+  onSetSpeed: (deviceId: string, speed: string) => void;
   onScan: (device: StorageDevice) => void;
   onRemove: (deviceId: string) => void;
 }
 
-export function DeviceCard({ device, onSetType, onScan, onRemove }: Props) {
+export function DeviceCard({ device, onSetType, onSetSpeed, onScan, onRemove }: Props) {
   const hasTotal = device.totalBytes > 0;
   const usedBytes = hasTotal ? device.totalBytes - device.availableBytes : 0;
   const usedPct = hasTotal ? (usedBytes / device.totalBytes) * 100 : 0;
@@ -69,6 +70,13 @@ export function DeviceCard({ device, onSetType, onScan, onRemove }: Props) {
           <option value="hot">Hot</option>
           <option value="cold">Cold</option>
           <option value="production">Production</option>
+        </select>
+        <select
+          value={device.driveSpeed || "slow"}
+          onChange={(e) => onSetSpeed(device.id, e.target.value)}
+        >
+          <option value="slow">Slow</option>
+          <option value="fast">Fast</option>
         </select>
         <button onClick={() => onScan(device)} disabled={!device.isConnected}>
           Scan

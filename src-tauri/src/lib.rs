@@ -7,6 +7,7 @@ mod importer;
 mod models;
 mod network;
 mod scanner;
+mod transfer;
 
 use std::sync::Arc;
 use tauri::{Emitter, Manager};
@@ -43,6 +44,7 @@ pub fn run() {
                 scan_target: Arc::new(Mutex::new(None)),
                 import_cancel_token: Arc::new(Mutex::new(None)),
                 import_analysis: Arc::new(Mutex::new(None)),
+                transfer_cancel_token: Arc::new(Mutex::new(None)),
             });
 
             let handle = app.handle().clone();
@@ -58,6 +60,7 @@ pub fn run() {
             commands::detect_devices,
             commands::get_devices,
             commands::set_device_type,
+            commands::set_drive_speed,
             commands::remove_device,
             commands::start_scan,
             commands::cancel_scan,
@@ -95,6 +98,8 @@ pub fn run() {
             commands::resolve_file_path,
             commands::get_thumbnail,
             commands::open_file,
+            commands::start_project_transfer,
+            commands::cancel_project_transfer,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

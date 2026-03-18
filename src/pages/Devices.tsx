@@ -18,7 +18,7 @@ const SECTIONS = [
 ] as const;
 
 export function Devices({ onScanDevice }: Props) {
-  const { devices, loading, refresh, setType, remove } = useDevices();
+  const { devices, loading, refresh, setType, setSpeed, remove } = useDevices();
   const [showAddModal, setShowAddModal] = useState(false);
 
   const handleAdd = async (path: string, label: string, deviceType: string) => {
@@ -57,7 +57,7 @@ export function Devices({ onScanDevice }: Props) {
             <h2 className="text-base mb-12 text-muted-color">{label}</h2>
             <div className="device-grid">
               {sectionDevices.map((d) => (
-                <DeviceCard key={d.id} device={d} onSetType={setType} onScan={onScanDevice} onRemove={remove} />
+                <DeviceCard key={d.id} device={d} onSetType={setType} onSetSpeed={setSpeed} onScan={onScanDevice} onRemove={remove} />
               ))}
             </div>
           </div>

@@ -14,6 +14,8 @@ pub struct StorageDevice {
     pub first_seen: String,
     pub last_seen: String,
     #[sqlx(default)]
+    pub drive_speed: String,
+    #[sqlx(default)]
     pub is_connected: bool,
 }
 
@@ -240,6 +242,44 @@ pub enum BulkDeleteEvent {
         current_file: String,
     },
     Complete(BulkDeleteResult),
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TransferCheck {
+    pub available_count: u64,
+    pub unavailable_files: Vec<UnavailableFile>,
+    pub total_bytes: i64,
+    pub already_on_target: u64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UnavailableFile {
+    pub blake3_hash: String,
+    pub representative_name: String,
+    pub file_size: i64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum TransferEvent {
+    CheckComplete(TransferCheck),
+    #[serde(rename_all = "camelCase")]
+    CopyStarted { total_files: u64, total_bytes: i64 },
+    CopyProgress(DeviceCopyProgress),
+    CopyComplete,
+    Error { message: String },
+    Cancelled,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ResolvedTransferFile {
+    pub blake3_hash: String,
+    pub file_size: i64,
+    pub file_name: String,
+    pub source_path: String,
+    pub modified_at: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

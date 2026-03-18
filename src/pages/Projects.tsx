@@ -3,6 +3,7 @@ import { useProjects } from "../hooks/useProjects";
 import { useDevices } from "../hooks/useDevices";
 import { FileTable } from "../components/FileTable";
 import { BulkDeleteModal } from "../components/BulkDeleteModal";
+import { TransferModal } from "../components/TransferModal";
 import { getFileSafety, deleteFileCopy, bulkDeleteFileCopies } from "../api/commands";
 import type { Project, FileLocation, FileSafety, BulkDeleteResult, BulkDeleteEvent } from "../types";
 import "./Projects.css";
@@ -37,7 +38,7 @@ function sortFiles(files: FileLocation[], key: SortKey, dir: SortDir): FileLocat
 export function Projects() {
   const { projects, selected, loading, refresh, select, create, update, remove, setSelected } =
     useProjects();
-  const { devices } = useDevices();
+  const { devices, refresh: refreshDevices } = useDevices();
   const [view, setView] = useState<View>("list");
 
   const [title, setTitle] = useState("");
@@ -53,6 +54,7 @@ export function Projects() {
   const [projectFiles, setProjectFiles] = useState<FileSafety[]>([]);
   const [dupDeviceFilter, setDupDeviceFilter] = useState("");
   const [showBulkDelete, setShowBulkDelete] = useState(false);
+  const [showTransfer, setShowTransfer] = useState(false);
 
   useEffect(() => {
     refresh();
@@ -290,6 +292,7 @@ export function Projects() {
           <div className="flex-row gap-8">
             <button onClick={() => { setSelected(null); setView("list"); }}>Back</button>
             <button onClick={() => openEdit(project)}>Edit</button>
+            <button onClick={() => setShowTransfer(true)}>Transfer to...</button>
             <button className="btn-danger" onClick={() => handleDeleteProject(project.id)}>Delete</button>
           </div>
         </div>
@@ -410,6 +413,15 @@ export function Projects() {
             files={bulkDeleteTargets}
             onConfirm={handleBulkDelete}
             onClose={() => setShowBulkDelete(false)}
+          />
+        )}
+
+        {showTransfer && (
+          <TransferModal
+            projectId={project.id}
+            projectTitle={project.title}
+            devices={devices}
+            onClose={() => { setShowTransfer(false); refreshDevices(); }}
           />
         )}
       </div>

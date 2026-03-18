@@ -39,6 +39,8 @@ pub async fn run_migrations(pool: &DbPool) -> Result<(), AppError> {
     sqlx::raw_sql(sql4).execute(pool).await?;
     let sql5 = include_str!("../migrations/005_quick_hash.sql");
     let _ = sqlx::raw_sql(sql5).execute(pool).await;
+    let sql6 = include_str!("../migrations/006_drive_speed.sql");
+    let _ = sqlx::raw_sql(sql6).execute(pool).await;
     // Purge any existing dotfiles from the database
     let _ = purge_dotfiles(pool).await;
     Ok(())
@@ -87,6 +89,15 @@ pub async fn get_device(pool: &DbPool, id: &str) -> Result<StorageDevice, AppErr
 pub async fn set_device_type(pool: &DbPool, device_id: &str, device_type: &str) -> Result<(), AppError> {
     sqlx::query("UPDATE storage_devices SET device_type = ? WHERE id = ?")
         .bind(device_type)
+        .bind(device_id)
+        .execute(pool)
+        .await?;
+    Ok(())
+}
+
+pub async fn set_drive_speed(pool: &DbPool, device_id: &str, drive_speed: &str) -> Result<(), AppError> {
+    sqlx::query("UPDATE storage_devices SET drive_speed = ? WHERE id = ?")
+        .bind(drive_speed)
         .bind(device_id)
         .execute(pool)
         .await?;
