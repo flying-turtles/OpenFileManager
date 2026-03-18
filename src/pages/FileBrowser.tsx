@@ -293,9 +293,6 @@ export function FileBrowser() {
           files={bulkDeleteTargets}
           onConfirm={bulkDeleteCopies}
           onClose={() => setShowBulkDelete(false)}
-          sameDriveMode={sameDriveOnly}
-          allFiles={sameDriveOnly ? duplicateFiles : undefined}
-          dupDeviceFilter={sameDriveOnly ? dupDeviceFilter : undefined}
         />
       )}
     </div>

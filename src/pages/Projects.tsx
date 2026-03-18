@@ -443,9 +443,6 @@ export function Projects() {
             files={bulkDeleteTargets}
             onConfirm={handleBulkDelete}
             onClose={() => setShowBulkDelete(false)}
-            sameDriveMode={sameDriveOnly}
-            allFiles={sameDriveOnly ? projectFiles : undefined}
-            dupDeviceFilter={sameDriveOnly ? dupDeviceFilter : undefined}
           />
         )}
 
