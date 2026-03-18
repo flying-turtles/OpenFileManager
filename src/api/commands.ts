@@ -8,6 +8,7 @@ import type {
   DirEntry,
   ScanEvent,
   ImportEvent,
+  TransferEvent,
   Project,
   ProjectDetail,
   NetworkDrive,
@@ -34,6 +35,13 @@ export async function setDeviceType(
     deviceId,
     deviceType,
   });
+}
+
+export async function setDriveSpeed(
+  deviceId: string,
+  driveSpeed: string
+): Promise<void> {
+  return invoke("set_drive_speed", { deviceId, driveSpeed });
 }
 
 export async function removeDevice(deviceId: string): Promise<void> {
@@ -257,4 +265,24 @@ export async function openFile(
   filePath: string
 ): Promise<void> {
   return invoke("open_file", { deviceId, filePath });
+}
+
+export async function startProjectTransfer(
+  projectId: number,
+  targetDeviceId: string,
+  skipUnavailable: boolean,
+  onEvent: (event: TransferEvent) => void
+): Promise<void> {
+  const channel = new Channel<TransferEvent>();
+  channel.onmessage = onEvent;
+  return invoke("start_project_transfer", {
+    projectId,
+    targetDeviceId,
+    skipUnavailable,
+    onEvent: channel,
+  });
+}
+
+export async function cancelProjectTransfer(): Promise<void> {
+  return invoke("cancel_project_transfer");
 }

@@ -79,6 +79,15 @@ pub async fn set_device_type(
 }
 
 #[tauri::command]
+pub async fn set_drive_speed(
+    state: State<'_, AppState>,
+    device_id: String,
+    drive_speed: String,
+) -> Result<(), AppError> {
+    db::set_drive_speed(&state.pool, &device_id, &drive_speed).await
+}
+
+#[tauri::command]
 pub async fn remove_device(
     state: State<'_, AppState>,
     device_id: String,
