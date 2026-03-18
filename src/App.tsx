@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
 import type { StorageDevice } from "./types";
 import { Dashboard } from "./pages/Dashboard";
 import { Devices } from "./pages/Devices";
@@ -6,13 +6,15 @@ import { Scanner } from "./pages/Scanner";
 import { FileBrowser } from "./pages/FileBrowser";
 import { Import } from "./pages/Import";
 import { Projects } from "./pages/Projects";
+import { Transfer } from "./pages/Transfer";
 import "./App.css";
 
-type Page = "dashboard" | "devices" | "scanner" | "files" | "import" | "projects";
+type Page = "dashboard" | "devices" | "scanner" | "files" | "import" | "transfer" | "projects";
 
 function App() {
   const [page, setPage] = useState<Page>("dashboard");
   const [scanDevice, setScanDevice] = useState<StorageDevice | undefined>();
+  const [transferProject, setTransferProject] = useState<{ id: number; title: string } | null>(null);
   const [theme, setTheme] = useState(() => localStorage.getItem("theme") || "system");
 
   useEffect(() => {
@@ -28,6 +30,11 @@ function App() {
     setScanDevice(device);
     setPage("scanner");
   };
+
+  const handleTransferProject = useCallback((id: number, title: string) => {
+    setTransferProject({ id, title });
+    setPage("transfer");
+  }, []);
 
   return (
     <div className="app">
@@ -47,6 +54,9 @@ function App() {
         </button>
         <button className={page === "import" ? "active" : ""} onClick={() => setPage("import")}>
           Import
+        </button>
+        <button className={page === "transfer" ? "active" : ""} onClick={() => setPage("transfer")}>
+          Transfer
         </button>
         <button className={page === "projects" ? "active" : ""} onClick={() => setPage("projects")}>
           Projects
@@ -69,7 +79,10 @@ function App() {
         <div className={page === "import" ? "contents-display" : "hidden-display"}>
           <Import />
         </div>
-        {page === "projects" && <Projects />}
+        <div className={page === "transfer" ? "contents-display" : "hidden-display"}>
+          <Transfer projectId={transferProject?.id ?? null} projectTitle={transferProject?.title ?? ""} />
+        </div>
+        {page === "projects" && <Projects onTransferProject={handleTransferProject} />}
       </main>
     </div>
   );

@@ -192,7 +192,6 @@ export interface UnavailableFile {
 }
 
 export type TransferEvent =
-  | { CheckComplete: TransferCheck }
   | { CopyStarted: { totalFiles: number; totalBytes: number } }
   | { CopyProgress: DeviceCopyProgress }
   | "CopyComplete"

@@ -263,7 +263,6 @@ pub struct UnavailableFile {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum TransferEvent {
-    CheckComplete(TransferCheck),
     #[serde(rename_all = "camelCase")]
     CopyStarted { total_files: u64, total_bytes: i64 },
     CopyProgress(DeviceCopyProgress),
@@ -280,6 +279,7 @@ pub struct ResolvedTransferFile {
     pub file_name: String,
     pub source_path: String,
     pub modified_at: Option<String>,
+    pub source_device_label: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

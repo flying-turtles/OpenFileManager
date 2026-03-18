@@ -14,7 +14,7 @@ use crate::models::*;
 
 /// Copies a file in chunks, checking the cancellation token between chunks.
 /// Returns Ok(true) if complete, Ok(false) if cancelled (partial file removed).
-async fn copy_file_cancellable(
+pub async fn copy_file_cancellable(
     src: &str,
     dest: &Path,
     cancel_token: &CancellationToken,
@@ -26,16 +26,18 @@ async fn copy_file_cancellable(
     let mut buf = vec![0u8; 256 * 1024]; // 256KB chunks
 
     loop {
-        if cancel_token.is_cancelled() {
-            drop(writer);
-            let _ = tokio::fs::remove_file(dest).await;
-            return Ok(false);
+        tokio::select! {
+            _ = cancel_token.cancelled() => {
+                drop(writer);
+                let _ = tokio::fs::remove_file(dest).await;
+                return Ok(false);
+            }
+            result = reader.read(&mut buf) => {
+                let n = result?;
+                if n == 0 { break; }
+                writer.write_all(&buf[..n]).await?;
+            }
         }
-        let n = reader.read(&mut buf).await?;
-        if n == 0 {
-            break;
-        }
-        writer.write_all(&buf[..n]).await?;
     }
     writer.flush().await?;
     Ok(true)

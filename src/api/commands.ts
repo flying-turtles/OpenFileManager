@@ -8,6 +8,7 @@ import type {
   DirEntry,
   ScanEvent,
   ImportEvent,
+  TransferCheck,
   TransferEvent,
   Project,
   ProjectDetail,
@@ -267,20 +268,19 @@ export async function openFile(
   return invoke("open_file", { deviceId, filePath });
 }
 
-export async function startProjectTransfer(
+export async function checkProjectTransfer(
   projectId: number,
-  targetDeviceId: string,
-  skipUnavailable: boolean,
+  targetDeviceId: string
+): Promise<TransferCheck> {
+  return invoke("check_project_transfer", { projectId, targetDeviceId });
+}
+
+export async function startProjectTransfer(
   onEvent: (event: TransferEvent) => void
 ): Promise<void> {
   const channel = new Channel<TransferEvent>();
   channel.onmessage = onEvent;
-  return invoke("start_project_transfer", {
-    projectId,
-    targetDeviceId,
-    skipUnavailable,
-    onEvent: channel,
-  });
+  return invoke("start_project_transfer", { onEvent: channel });
 }
 
 export async function cancelProjectTransfer(): Promise<void> {

@@ -219,13 +219,17 @@ body {
 
 .device-actions {
   display: flex;
-  gap: 8px;
+  flex-wrap: wrap;
+  gap: 6px;
   margin-top: 8px;
 }
 
-.device-actions select,
+.device-actions select {
+  flex: 0 1 auto;
+}
+
 .device-actions button {
-  flex: 1;
+  flex: 0 0 auto;
 }
 
 /* Forms */
