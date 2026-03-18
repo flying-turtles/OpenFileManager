@@ -696,3 +696,75 @@ select:focus-visible {
   color: var(--danger);
   font-weight: 600;
 }
+
+.bulk-delete-mode-toggle {
+  margin: 12px 0;
+}
+
+.bulk-delete-group {
+  padding: 8px 0;
+  border-bottom: 1px solid var(--border);
+}
+
+.bulk-delete-group:last-child {
+  border-bottom: none;
+}
+
+.bulk-delete-group-label {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text);
+  display: block;
+  margin-bottom: 4px;
+}
+
+.bulk-delete-select-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 0;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.bulk-delete-select-item input[type="checkbox"] {
+  flex-shrink: 0;
+}
+
+.bulk-delete-select-item .bulk-delete-file-path {
+  flex: 1;
+  min-width: 0;
+}
+
+.bulk-delete-select-item.kept .bulk-delete-file-path {
+  color: var(--text);
+}
+
+.bulk-delete-select-item.marked .bulk-delete-file-path {
+  color: var(--text-muted);
+  text-decoration: line-through;
+}
+
+.bulk-delete-badge {
+  flex-shrink: 0;
+  font-size: 11px;
+  padding: 1px 6px;
+  border-radius: 3px;
+  font-weight: 600;
+}
+
+.badge-keep {
+  background: rgba(46, 160, 67, 0.15);
+  color: #2ea043;
+}
+
+.badge-delete {
+  background: rgba(248, 81, 73, 0.15);
+  color: var(--danger);
+}
+
+.bulk-delete-divider {
+  height: 1px;
+  background: var(--border);
+  margin: 8px 0;
+}
