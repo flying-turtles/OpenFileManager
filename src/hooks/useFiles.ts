@@ -104,7 +104,7 @@ export function useFiles() {
     }
   }, []);
 
-  const loadDuplicateFiles = useCallback(async (deviceId?: string) => {
+  const loadDuplicateFiles = useCallback(async (deviceId?: string, sameDriveOnly?: boolean) => {
     const loadId = ++loadIdRef.current;
     setLoading(true);
     setDuplicateFiles([]);
@@ -115,7 +115,7 @@ export function useFiles() {
       let hasMore = true;
       let firstPage = true;
       while (hasMore) {
-        const page = await getDuplicateFilesPage(offset, undefined, deviceId);
+        const page = await getDuplicateFilesPage(offset, undefined, deviceId, sameDriveOnly);
         if (loadId !== loadIdRef.current) return;
         accumulated = [...accumulated, ...page.files];
         setDuplicateFiles(accumulated);

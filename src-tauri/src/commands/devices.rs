@@ -15,6 +15,29 @@ pub async fn detect_devices(state: State<'_, AppState>) -> Result<Vec<StorageDev
     for disk in &disks {
         db::upsert_device(&state.pool, disk).await?;
     }
+
+    // Scan /Volumes/ for .filemanagerid files — updates mount_point
+    // when a volume remounts at a different path (e.g. Media-1 → Media-2)
+    {
+        let all_devs = db::get_all_devices(&state.pool).await?;
+        for (fmid, current_mount) in devices::scan_volumes_for_filemanager_ids() {
+            if let Some(existing) = all_devs.iter().find(|d| d.id == fmid) {
+                if existing.mount_point != current_mount {
+                    let (_, avail) = devices::disk_space_for_path(&current_mount);
+                    let updated = DetectedDisk {
+                        id: fmid,
+                        label: existing.label.clone(),
+                        mount_point: current_mount,
+                        total_bytes: 0,
+                        available_bytes: avail,
+                        is_removable: existing.is_removable,
+                    };
+                    let _ = db::upsert_device(&state.pool, &updated).await;
+                }
+            }
+        }
+    }
+
     let mut all = db::get_all_devices(&state.pool).await?;
     // For manually-added locations not covered by detect_volumes,
     // only store available_bytes (total is unreliable for SMB/subfolder paths)

@@ -118,7 +118,8 @@ pub fn detect_volumes() -> Vec<DetectedDisk> {
 }
 
 /// Returns (total_bytes, available_bytes) for the filesystem containing `path`.
-/// Uses statvfs which works for any path including SMB/NFS mounts.
+/// Uses statfs to detect actual mount points vs local disk fallthrough.
+/// Returns (0, 0) if the path resolves to the root filesystem (not a real mount).
 pub fn disk_space_for_path(path: &str) -> (i64, i64) {
     use std::ffi::CString;
     let c_path = match CString::new(path) {
@@ -126,15 +127,42 @@ pub fn disk_space_for_path(path: &str) -> (i64, i64) {
         Err(_) => return (0, 0),
     };
     unsafe {
-        let mut stat: libc::statvfs = std::mem::zeroed();
-        if libc::statvfs(c_path.as_ptr(), &mut stat) == 0 {
-            let total = stat.f_blocks as i64 * stat.f_frsize as i64;
-            let available = stat.f_bavail as i64 * stat.f_frsize as i64;
-            (total, available)
-        } else {
-            (0, 0)
+        let mut path_stat: libc::statfs = std::mem::zeroed();
+        if libc::statfs(c_path.as_ptr(), &mut path_stat) != 0 {
+            return (0, 0);
+        }
+        // Check if this path is on the boot disk (not a separate mount)
+        let mount_on = std::ffi::CStr::from_ptr(path_stat.f_mntonname.as_ptr())
+            .to_string_lossy();
+        if mount_on == "/" || mount_on == "/System/Volumes/Data" {
+            return (0, 0);
+        }
+        let total = path_stat.f_blocks as i64 * path_stat.f_bsize as i64;
+        let available = path_stat.f_bavail as i64 * path_stat.f_bsize as i64;
+        (total, available)
+    }
+}
+
+/// Scans /Volumes/ for .filemanagerid files and returns (device_id, mount_point) pairs.
+pub fn scan_volumes_for_filemanager_ids() -> Vec<(String, String)> {
+    let mut results = Vec::new();
+    if let Ok(entries) = std::fs::read_dir("/Volumes") {
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.is_dir() {
+                let id_file = path.join(FILEMANAGER_ID_FILE);
+                if id_file.is_file() {
+                    if let Ok(contents) = std::fs::read_to_string(&id_file) {
+                        let id = contents.trim().to_string();
+                        if !id.is_empty() {
+                            results.push((id, path.to_string_lossy().to_string()));
+                        }
+                    }
+                }
+            }
         }
     }
+    results
 }
 
 /// Returns the device ID for a given path.

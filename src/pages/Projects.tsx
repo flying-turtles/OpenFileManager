@@ -52,6 +52,7 @@ export function Projects() {
   const [sortDir, setSortDir] = useState<SortDir>("asc");
   const [projectFiles, setProjectFiles] = useState<FileSafety[]>([]);
   const [dupDeviceFilter, setDupDeviceFilter] = useState("");
+  const [sameDriveOnly, setSameDriveOnly] = useState(false);
   const [showBulkDelete, setShowBulkDelete] = useState(false);
 
   useEffect(() => {
@@ -81,6 +82,7 @@ export function Projects() {
     setSafetyFilter("all");
     setExtFilter("");
     setDupDeviceFilter("");
+    setSameDriveOnly(false);
     setSortKey("name");
     setSortDir("asc");
     await select(id);
@@ -150,6 +152,22 @@ export function Projects() {
 
   const bulkDeleteTargets: FileLocation[] = useMemo(() => {
     if (safetyFilter !== "duplicates" || !dupDeviceFilter) return [];
+    if (sameDriveOnly) {
+      return projectFiles.flatMap((sf) => {
+        const onDevice = sf.locations.filter((l) => {
+          if (l.deviceId !== dupDeviceFilter) return false;
+          if (extFilter) {
+            const dot = l.fileName.lastIndexOf(".");
+            const ext = dot > 0 ? l.fileName.slice(dot + 1).toLowerCase() : "";
+            if (ext !== extFilter) return false;
+          }
+          return true;
+        });
+        if (onDevice.length <= 1) return [];
+        const sorted = [...onDevice].sort((a, b) => a.filePath.length - b.filePath.length);
+        return sorted.slice(1);
+      });
+    }
     return projectFiles
       .filter((sf) => sf.totalCopies > 2)
       .flatMap((sf) =>
@@ -163,7 +181,7 @@ export function Projects() {
           return true;
         })
       );
-  }, [projectFiles, dupDeviceFilter, extFilter, safetyFilter]);
+  }, [projectFiles, dupDeviceFilter, extFilter, safetyFilter, sameDriveOnly]);
 
   const bulkDeleteDeviceName = useMemo(() => {
     const d = devices.find((d) => d.id === dupDeviceFilter);
@@ -183,11 +201,14 @@ export function Projects() {
       let dups = projectFiles.filter((sf) => sf.totalCopies > 2);
       if (dupDeviceFilter) {
         dups = dups.filter((sf) => sf.locations.some((l) => l.deviceId === dupDeviceFilter));
+        if (sameDriveOnly) {
+          dups = dups.filter((sf) => sf.locations.filter((l) => l.deviceId === dupDeviceFilter).length > 1);
+        }
       }
       return dups;
     }
     return projectFiles;
-  }, [projectFiles, safetyFilter, dupDeviceFilter]);
+  }, [projectFiles, safetyFilter, dupDeviceFilter, sameDriveOnly]);
 
   // One row per unique file (first location), not one per location
   const rawFiles: FileLocation[] = useMemo(
@@ -311,16 +332,16 @@ export function Projects() {
 
         <div className="browser-controls">
           <div className="filter-toggle">
-            <button className={safetyFilter === "all" ? "active" : ""} onClick={() => { setSafetyFilter("all"); setExtFilter(""); setDupDeviceFilter(""); }}>
+            <button className={safetyFilter === "all" ? "active" : ""} onClick={() => { setSafetyFilter("all"); setExtFilter(""); setDupDeviceFilter(""); setSameDriveOnly(false); }}>
               All
             </button>
-            <button className={safetyFilter === "safe" ? "active" : ""} onClick={() => { setSafetyFilter("safe"); setExtFilter(""); setDupDeviceFilter(""); }}>
+            <button className={safetyFilter === "safe" ? "active" : ""} onClick={() => { setSafetyFilter("safe"); setExtFilter(""); setDupDeviceFilter(""); setSameDriveOnly(false); }}>
               Safe Only
             </button>
-            <button className={safetyFilter === "unsafe" ? "active" : ""} onClick={() => { setSafetyFilter("unsafe"); setExtFilter(""); setDupDeviceFilter(""); }}>
+            <button className={safetyFilter === "unsafe" ? "active" : ""} onClick={() => { setSafetyFilter("unsafe"); setExtFilter(""); setDupDeviceFilter(""); setSameDriveOnly(false); }}>
               Unsafe Only
             </button>
-            <button className={safetyFilter === "duplicates" ? "active" : ""} onClick={() => { setSafetyFilter("duplicates"); setExtFilter(""); }}>
+            <button className={safetyFilter === "duplicates" ? "active" : ""} onClick={() => { setSafetyFilter("duplicates"); setExtFilter(""); setSameDriveOnly(false); }}>
               Duplicates
             </button>
           </div>
@@ -337,6 +358,15 @@ export function Projects() {
                   </option>
                 ))}
               </select>
+              <label style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                <input
+                  type="checkbox"
+                  checked={sameDriveOnly}
+                  onChange={(e) => setSameDriveOnly(e.target.checked)}
+                  disabled={!dupDeviceFilter}
+                />
+                Same-drive only
+              </label>
               {bulkDeleteTargets.length > 0 && bulkDeleteDeviceConnected && (
                 <button className="btn-danger" onClick={() => setShowBulkDelete(true)}>
                   Bulk Delete ({bulkDeleteTargets.length})
@@ -410,6 +440,9 @@ export function Projects() {
             files={bulkDeleteTargets}
             onConfirm={handleBulkDelete}
             onClose={() => setShowBulkDelete(false)}
+            sameDriveMode={sameDriveOnly}
+            allFiles={sameDriveOnly ? projectFiles : undefined}
+            dupDeviceFilter={sameDriveOnly ? dupDeviceFilter : undefined}
           />
         )}
       </div>

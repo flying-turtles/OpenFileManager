@@ -12,6 +12,35 @@ use crate::error::AppError;
 use crate::hasher;
 use crate::models::*;
 
+/// Copies a file in chunks, checking the cancellation token between chunks.
+/// Returns Ok(true) if complete, Ok(false) if cancelled (partial file removed).
+async fn copy_file_cancellable(
+    src: &str,
+    dest: &Path,
+    cancel_token: &CancellationToken,
+) -> Result<bool, std::io::Error> {
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+    let mut reader = tokio::fs::File::open(src).await?;
+    let mut writer = tokio::fs::File::create(dest).await?;
+    let mut buf = vec![0u8; 256 * 1024]; // 256KB chunks
+
+    loop {
+        if cancel_token.is_cancelled() {
+            drop(writer);
+            let _ = tokio::fs::remove_file(dest).await;
+            return Ok(false);
+        }
+        let n = reader.read(&mut buf).await?;
+        if n == 0 {
+            break;
+        }
+        writer.write_all(&buf[..n]).await?;
+    }
+    writer.flush().await?;
+    Ok(true)
+}
+
 pub async fn analyze_sd_card(
     pool: DbPool,
     sd_mount: PathBuf,
@@ -181,6 +210,20 @@ pub async fn run_import(
             let mut bytes_copied: i64 = 0;
             let mut files_copied: u64 = 0;
 
+            let mut consecutive_errors: u32 = 0;
+            const MAX_CONSECUTIVE_ERRORS: u32 = 3;
+
+            // Send initial progress so UI shows immediately
+            let _ = channel.send(ImportEvent::CopyProgress(DeviceCopyProgress {
+                device_id: device_id.clone(),
+                device_label: device_label.clone(),
+                bytes_copied: 0,
+                total_bytes: device_total_bytes,
+                files_copied: 0,
+                total_files: device_total_files,
+                current_file: "Preparing...".to_string(),
+            }));
+
             for file in &analysis.files {
                 if cancel_token.is_cancelled() {
                     let _ = channel.send(ImportEvent::Cancelled);
@@ -191,11 +234,29 @@ pub async fn run_import(
                     continue;
                 }
 
+                // Show which file is being copied before the copy starts
+                let _ = channel.send(ImportEvent::CopyProgress(DeviceCopyProgress {
+                    device_id: device_id.clone(),
+                    device_label: device_label.clone(),
+                    bytes_copied,
+                    total_bytes: device_total_bytes,
+                    files_copied,
+                    total_files: device_total_files,
+                    current_file: format!("Copying {}...", file.file_name),
+                }));
+
                 let dest_dir = PathBuf::from(&mount_point).join(&file.created_date);
                 if let Err(e) = tokio::fs::create_dir_all(&dest_dir).await {
+                    consecutive_errors += 1;
                     let _ = channel.send(ImportEvent::Error {
                         message: format!("mkdir {}: {}", dest_dir.display(), e),
                     });
+                    if consecutive_errors >= MAX_CONSECUTIVE_ERRORS {
+                        let _ = channel.send(ImportEvent::Error {
+                            message: format!("Aborting {} — too many consecutive errors", device_label),
+                        });
+                        return;
+                    }
                     continue;
                 }
 
@@ -220,8 +281,9 @@ pub async fn run_import(
                     }
                 }
 
-                match tokio::fs::copy(&file.source_path, &dest_path).await {
-                    Ok(_) => {
+                match copy_file_cancellable(&file.source_path, &dest_path, &cancel_token).await {
+                    Ok(true) => {
+                        consecutive_errors = 0;
                         bytes_copied += file.file_size;
                         files_copied += 1;
 
@@ -268,11 +330,23 @@ pub async fn run_import(
                             current_file: file.file_name.clone(),
                         }));
                     }
+                    Ok(false) => {
+                        // Cancelled mid-copy, partial file already cleaned up
+                        let _ = channel.send(ImportEvent::Cancelled);
+                        return;
+                    }
                     Err(e) => {
+                        consecutive_errors += 1;
                         let _ = tokio::fs::remove_file(&dest_path).await;
                         let _ = channel.send(ImportEvent::Error {
                             message: format!("Copy {} failed: {}", file.file_name, e),
                         });
+                        if consecutive_errors >= MAX_CONSECUTIVE_ERRORS {
+                            let _ = channel.send(ImportEvent::Error {
+                                message: format!("Aborting {} — too many consecutive errors", device_label),
+                            });
+                            return;
+                        }
                     }
                 }
             }

@@ -36,6 +36,7 @@ export function FileBrowser() {
   const [sortKey, setSortKey] = useState<SortKey>("name");
   const [sortDir, setSortDir] = useState<SortDir>("asc");
   const [dupDeviceFilter, setDupDeviceFilter] = useState("");
+  const [sameDriveOnly, setSameDriveOnly] = useState(false);
   const [showBulkDelete, setShowBulkDelete] = useState(false);
 
   const deviceNames = useMemo(() => {
@@ -51,6 +52,22 @@ export function FileBrowser() {
 
   const bulkDeleteTargets: FileLocation[] = useMemo(() => {
     if (filter !== "duplicates" || !dupDeviceFilter) return [];
+    if (sameDriveOnly) {
+      return duplicateFiles.flatMap((sf) => {
+        const onDevice = sf.locations.filter((l) => {
+          if (l.deviceId !== dupDeviceFilter) return false;
+          if (extFilter) {
+            const dot = l.fileName.lastIndexOf(".");
+            const ext = dot > 0 ? l.fileName.slice(dot + 1).toLowerCase() : "";
+            if (ext !== extFilter) return false;
+          }
+          return true;
+        });
+        if (onDevice.length <= 1) return [];
+        const sorted = [...onDevice].sort((a, b) => a.filePath.length - b.filePath.length);
+        return sorted.slice(1);
+      });
+    }
     return duplicateFiles.flatMap((sf) =>
       sf.locations.filter((l) => {
         if (l.deviceId !== dupDeviceFilter) return false;
@@ -62,7 +79,7 @@ export function FileBrowser() {
         return true;
       })
     );
-  }, [duplicateFiles, dupDeviceFilter, extFilter, filter]);
+  }, [duplicateFiles, dupDeviceFilter, extFilter, filter, sameDriveOnly]);
 
   const bulkDeleteDeviceName = useMemo(() => {
     const d = devices.find((d) => d.id === dupDeviceFilter);
@@ -80,15 +97,16 @@ export function FileBrowser() {
     } else if (filter === "safe") {
       loadSafeFiles();
     } else if (filter === "duplicates") {
-      loadDuplicateFiles(dupDeviceFilter || undefined);
+      loadDuplicateFiles(dupDeviceFilter || undefined, sameDriveOnly || undefined);
     } else if (selectedDevice) {
       loadDeviceFiles(selectedDevice);
     }
-  }, [selectedDevice, filter, dupDeviceFilter, loadDeviceFiles, loadUnsafeFiles, loadSafeFiles, loadDuplicateFiles]);
+  }, [selectedDevice, filter, dupDeviceFilter, sameDriveOnly, loadDeviceFiles, loadUnsafeFiles, loadSafeFiles, loadDuplicateFiles]);
 
   useEffect(() => {
     setExtFilter("");
     setDupDeviceFilter("");
+    setSameDriveOnly(false);
   }, [filter, selectedDevice]);
 
   const rawFiles: FileLocation[] =
@@ -189,6 +207,15 @@ export function FileBrowser() {
                 </option>
               ))}
             </select>
+            <label style={{ display: "flex", alignItems: "center", gap: 6 }}>
+              <input
+                type="checkbox"
+                checked={sameDriveOnly}
+                onChange={(e) => setSameDriveOnly(e.target.checked)}
+                disabled={!dupDeviceFilter}
+              />
+              Same-drive only
+            </label>
             {bulkDeleteTargets.length > 0 && bulkDeleteDeviceConnected && (
               <button className="btn-danger" onClick={() => setShowBulkDelete(true)}>
                 Bulk Delete ({bulkDeleteTargets.length})
@@ -266,6 +293,9 @@ export function FileBrowser() {
           files={bulkDeleteTargets}
           onConfirm={bulkDeleteCopies}
           onClose={() => setShowBulkDelete(false)}
+          sameDriveMode={sameDriveOnly}
+          allFiles={sameDriveOnly ? duplicateFiles : undefined}
+          dupDeviceFilter={sameDriveOnly ? dupDeviceFilter : undefined}
         />
       )}
     </div>

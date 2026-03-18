@@ -63,14 +63,17 @@ pub async fn start_import(
         *guard = Some(cancel_token.clone());
     }
 
-    let volumes = crate::devices::detect_volumes();
+    let all_devices = crate::db::get_all_devices(&pool).await?;
     let mut targets = Vec::new();
     for id in target_device_ids {
-        let vol = volumes
+        let dev = all_devices
             .iter()
-            .find(|v| v.id == id)
-            .ok_or_else(|| AppError::General(format!("Device {} not connected", id)))?;
-        targets.push((vol.id.clone(), vol.mount_point.clone(), vol.label.clone()));
+            .find(|d| d.id == id)
+            .ok_or_else(|| AppError::General(format!("Device {} not found", id)))?;
+        if !std::path::Path::new(&dev.mount_point).exists() {
+            return Err(AppError::General(format!("Device {} ({}) is not connected", dev.label, dev.mount_point)));
+        }
+        targets.push((dev.id.clone(), dev.mount_point.clone(), dev.label.clone()));
     }
 
     tokio::spawn(async move {

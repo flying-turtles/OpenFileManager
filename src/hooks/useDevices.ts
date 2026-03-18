@@ -40,8 +40,11 @@ export function useDevices() {
   useEffect(() => {
     refresh();
     const unlisten = listen("devices-changed", () => refresh());
+    const onFocus = () => refresh();
+    window.addEventListener("focus", onFocus);
     return () => {
       unlisten.then((fn) => fn());
+      window.removeEventListener("focus", onFocus);
     };
   }, [refresh]);
 

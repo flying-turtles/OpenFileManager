@@ -29,7 +29,7 @@ export function useImport() {
   const handleEvent = useCallback((event: ImportEvent) => {
     if (typeof event === "string") {
       if (event === "CopyComplete") setPhase("complete");
-      if (event === "Cancelled") setPhase("idle");
+      if (event === "Cancelled") setPhase("reviewed");
       return;
     }
     if ("AnalysisStarted" in event) {
@@ -70,13 +70,20 @@ export function useImport() {
       setPhase("copying");
       setCopyProgress({});
       setErrors([]);
-      await startImport(deviceIds, handleEvent);
+      try {
+        await startImport(deviceIds, handleEvent);
+      } catch (e: any) {
+        setErrors([String(e)]);
+        setPhase("reviewed");
+      }
     },
     [handleEvent]
   );
 
   const cancel = useCallback(async () => {
     await cancelImport();
+    setCopyProgress({});
+    setPhase("reviewed");
   }, []);
 
   const eject = useCallback(async (mountPoint: string) => {

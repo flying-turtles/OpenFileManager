@@ -1,8 +1,7 @@
-import { useState, useEffect } from "react";
+import { useState } from "react";
 import { open } from "@tauri-apps/plugin-dialog";
 import { useImport } from "../hooks/useImport";
-import { detectDevices } from "../api/commands";
-import type { StorageDevice } from "../types";
+import { useDevices } from "../hooks/useDevices";
 import "./Import.css";
 
 function formatBytes(bytes: number): string {
@@ -27,14 +26,10 @@ export function Import() {
     reset,
   } = useImport();
 
-  const [devices, setDevices] = useState<StorageDevice[]>([]);
+  const { devices } = useDevices();
   const [selectedSource, setSelectedSource] = useState("");
   const [sourcePath, setSourcePath] = useState("");
   const [selectedTargets, setSelectedTargets] = useState<string[]>([]);
-
-  useEffect(() => {
-    detectDevices().then(setDevices);
-  }, [phase]);
 
   const removableDevices = devices.filter(
     (d) => d.isConnected && d.mountPoint !== "/"
@@ -42,6 +37,8 @@ export function Import() {
   const targetDevices = devices.filter(
     (d) => d.isConnected && d.id !== analysis?.sdDeviceId
   );
+  const deviceNames: Record<string, string> = {};
+  for (const d of devices) deviceNames[d.id] = d.label;
 
   const toggleTarget = (id: string) => {
     setSelectedTargets((prev) =>
@@ -183,9 +180,8 @@ export function Import() {
                   </span>
                   <span className="import-file-date">{f.createdDate}</span>
                   {f.existingLocations.length > 0 ? (
-                    <span className="badge badge-safe">
-                      {f.existingLocations.length} backup
-                      {f.existingLocations.length > 1 ? "s" : ""}
+                    <span className="badge badge-safe" title={f.existingLocations.map((l) => deviceNames[l.deviceId] || l.deviceId).join(", ")}>
+                      {f.existingLocations.map((l) => deviceNames[l.deviceId] || l.deviceId).join(", ")}
                     </span>
                   ) : (
                     <span className="badge badge-warn">New</span>
@@ -212,7 +208,8 @@ export function Import() {
                       !f.existingLocations.some((l) => l.deviceId === d.id)
                   )
                   .reduce((sum, f) => sum + f.fileSize, 0);
-                const fits = needed <= d.availableBytes;
+                const storageUnknown = d.totalBytes === 0 && d.availableBytes === 0;
+                const fits = storageUnknown || needed <= d.availableBytes;
                 return (
                   <label
                     key={d.id}
@@ -227,8 +224,10 @@ export function Import() {
                     <div className="target-device-info">
                       <span className="target-device-name">{d.label}</span>
                       <span className="target-device-space">
-                        {formatBytes(d.availableBytes)} free
-                        {needed > 0 && ` · ${formatBytes(needed)} needed`}
+                        {storageUnknown
+                          ? "Storage info unavailable"
+                          : `${formatBytes(d.availableBytes)} free`}
+                        {!storageUnknown && needed > 0 && ` · ${formatBytes(needed)} needed`}
                         {!fits && " · Not enough space"}
                       </span>
                     </div>
@@ -266,40 +265,143 @@ export function Import() {
 
       {phase === "copying" && (
         <div className="import-section">
-          <h3>Copying...</h3>
-          {Object.values(copyProgress).map((p) => (
-            <div key={p.deviceId} className="progress-container">
-              <div className="progress-label">{p.deviceLabel}</div>
-              <div className="progress-bar">
-                <div
-                  className="progress-fill"
-                  style={{
-                    width: `${p.totalBytes ? (p.bytesCopied / p.totalBytes) * 100 : 100}%`,
-                  }}
-                />
-              </div>
-              <div className="progress-stats">
-                <span>
-                  {p.filesCopied} / {p.totalFiles} files
-                </span>
-                <span>
-                  {formatBytes(p.bytesCopied)} / {formatBytes(p.totalBytes)}
-                </span>
-              </div>
-              <div className="progress-file">{p.currentFile}</div>
+          <h3>Importing to {selectedTargets.length} device{selectedTargets.length !== 1 ? "s" : ""}...</h3>
+          {errors.length > 0 && (
+            <div className="error-msg" style={{ marginBottom: 12 }}>
+              {errors[errors.length - 1]}
             </div>
-          ))}
+          )}
+          {selectedTargets.map((id) => {
+            const p = copyProgress[id];
+            const label = deviceNames[id] || id;
+            if (p) {
+              const pct = p.totalBytes ? (p.bytesCopied / p.totalBytes) * 100 : 0;
+              return (
+                <div key={id} className="progress-container">
+                  <div className="progress-label">{p.deviceLabel}</div>
+                  <div className="progress-bar">
+                    <div className="progress-fill" style={{ width: `${pct}%` }} />
+                  </div>
+                  <div className="progress-stats">
+                    <span>{p.filesCopied} / {p.totalFiles} files</span>
+                    <span>{formatBytes(p.bytesCopied)} / {formatBytes(p.totalBytes)}</span>
+                  </div>
+                  <div className="progress-file">{p.currentFile}</div>
+                </div>
+              );
+            }
+            return (
+              <div key={id} className="progress-container">
+                <div className="progress-label">{label}</div>
+                <div className="progress-bar">
+                  <div className="progress-fill" style={{ width: "0%" }} />
+                </div>
+                <div className="progress-stats">
+                  <span>Waiting...</span>
+                </div>
+              </div>
+            );
+          })}
           <button className="btn-danger" onClick={cancel}>
             Cancel
           </button>
         </div>
       )}
 
-      {phase === "complete" && analysis && (
+      {phase === "complete" && analysis && (() => {
+        const totalCopied = Object.values(copyProgress);
+        const totalFilesCopied = totalCopied.reduce((s, p) => s + Number(p.filesCopied), 0);
+        const totalBytesCopied = totalCopied.reduce((s, p) => s + p.bytesCopied, 0);
+        const newBefore = analysis.files.filter((f) => f.existingLocations.length === 0).length;
+        const copiedToNames = selectedTargets.map((id) => deviceNames[id] || id);
+        // Post-import: each file's backup count = pre-existing + number of targets it was copied to
+        const backupCounts = analysis.files.map((f) => {
+          const preExisting = f.existingLocations.length;
+          // Files already on a target weren't copied there again
+          const newCopies = selectedTargets.filter(
+            (tid) => !f.existingLocations.some((l) => l.deviceId === tid)
+          ).length;
+          return { fileName: f.fileName, total: preExisting + newCopies, locations: [
+            ...f.existingLocations.map((l) => deviceNames[l.deviceId] || l.deviceId),
+            ...selectedTargets.filter((tid) => !f.existingLocations.some((l) => l.deviceId === tid)).map((tid) => deviceNames[tid] || tid),
+          ]};
+        });
+        const fullyBacked = backupCounts.filter((f) => f.total >= 2).length;
+        const singleCopy = backupCounts.filter((f) => f.total === 1).length;
+        const noCopy = backupCounts.filter((f) => f.total === 0).length;
+
+        return (
         <div className="import-section">
-          <div className="scan-result">
-            <span>Import complete!</span>
+          <h3>Import Complete</h3>
+          <div className="stats-grid">
+            <div className="stat-card">
+              <div className="stat-value">{totalFilesCopied}</div>
+              <div className="stat-label">Files Copied</div>
+            </div>
+            <div className="stat-card">
+              <div className="stat-value">{formatBytes(totalBytesCopied)}</div>
+              <div className="stat-label">Data Copied</div>
+            </div>
+            <div className="stat-card">
+              <div className="stat-value">{copiedToNames.length}</div>
+              <div className="stat-label">Target{copiedToNames.length !== 1 ? "s" : ""}</div>
+            </div>
+            <div className="stat-card">
+              <div className="stat-value">{newBefore}</div>
+              <div className="stat-label">New Files</div>
+            </div>
           </div>
+
+          <div style={{ marginTop: 16 }}>
+            <h3>Copied To</h3>
+            {totalCopied.map((p) => (
+              <div key={p.deviceId} className="import-file-row">
+                <span className="import-file-name">{p.deviceLabel}</span>
+                <span className="import-file-size">{p.filesCopied} files</span>
+                <span className="import-file-size">{formatBytes(p.bytesCopied)}</span>
+              </div>
+            ))}
+          </div>
+
+          <div style={{ marginTop: 16 }}>
+            <h3>Backup Status</h3>
+            <div className="stats-grid">
+              <div className="stat-card">
+                <div className="stat-value" style={{ color: "var(--success)" }}>{fullyBacked}</div>
+                <div className="stat-label">2+ Backups</div>
+              </div>
+              <div className="stat-card">
+                <div className="stat-value" style={{ color: "var(--warning)" }}>{singleCopy}</div>
+                <div className="stat-label">1 Backup</div>
+              </div>
+              {noCopy > 0 && (
+                <div className="stat-card">
+                  <div className="stat-value" style={{ color: "var(--danger)" }}>{noCopy}</div>
+                  <div className="stat-label">No Backup</div>
+                </div>
+              )}
+            </div>
+          </div>
+
+          <div className="import-files-preview" style={{ marginTop: 16 }}>
+            <h3>Files ({backupCounts.length})</h3>
+            <div className="import-file-list">
+              {backupCounts.slice(0, 100).map((f, i) => (
+                <div key={i} className="import-file-row">
+                  <span className="import-file-name">{f.fileName}</span>
+                  <span className={`badge ${f.total >= 2 ? "badge-safe" : f.total === 1 ? "badge-warn" : "badge-danger"}`}>
+                    {f.locations.join(", ")}
+                  </span>
+                </div>
+              ))}
+              {backupCounts.length > 100 && (
+                <div className="import-file-row text-center text-muted-color">
+                  ...and {backupCounts.length - 100} more files
+                </div>
+              )}
+            </div>
+          </div>
+
           <div className="import-actions mt-16">
             <button
               onClick={() =>
@@ -316,7 +418,8 @@ export function Import() {
             </button>
           </div>
         </div>
-      )}
+        );
+      })()}
     </div>
   );
 }
