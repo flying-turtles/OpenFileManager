@@ -1,14 +1,7 @@
 import { useEffect, useState } from "react";
 import type { DashboardStats } from "../types";
 import { getDashboardStats } from "../api/commands";
-
-function formatBytes(bytes: number): string {
-  if (bytes === 0) return "0 B";
-  const k = 1024;
-  const sizes = ["B", "KB", "MB", "GB", "TB"];
-  const i = Math.floor(Math.log(bytes) / Math.log(k));
-  return parseFloat((bytes / Math.pow(k, i)).toFixed(1)) + " " + sizes[i];
-}
+import { formatBytes } from "../utils/format";
 
 export function Dashboard() {
   const [stats, setStats] = useState<DashboardStats | null>(null);
@@ -22,7 +15,7 @@ export function Dashboard() {
       <h1>Dashboard</h1>
       {!stats ? (
         <div className="stats-grid">
-          {[...Array(4)].map((_, i) => <div key={i} className="skeleton skeleton-stat" />)}
+          {[...Array(5)].map((_, i) => <div key={i} className="skeleton skeleton-stat" />)}
         </div>
       ) : (
       <div className="stats-grid">

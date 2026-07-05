@@ -2,15 +2,8 @@ import { useState } from "react";
 import { open } from "@tauri-apps/plugin-dialog";
 import { useImport } from "../hooks/useImport";
 import { useDevices } from "../hooks/useDevices";
+import { formatBytes } from "../utils/format";
 import "./Import.css";
-
-function formatBytes(bytes: number): string {
-  if (bytes === 0) return "0 B";
-  const k = 1024;
-  const sizes = ["B", "KB", "MB", "GB", "TB"];
-  const i = Math.floor(Math.log(bytes) / Math.log(k));
-  return parseFloat((bytes / Math.pow(k, i)).toFixed(1)) + " " + sizes[i];
-}
 
 export function Import() {
   const {
@@ -309,6 +302,7 @@ export function Import() {
       )}
 
       {phase === "complete" && analysis && (() => {
+        const sourceDevice = devices.find((d) => d.id === analysis.sdDeviceId);
         const totalCopied = Object.values(copyProgress);
         const totalFilesCopied = totalCopied.reduce((s, p) => s + Number(p.filesCopied), 0);
         const totalBytesCopied = totalCopied.reduce((s, p) => s + p.bytesCopied, 0);
@@ -403,17 +397,20 @@ export function Import() {
           </div>
 
           <div className="import-actions mt-16">
+            {sourceDevice?.isRemovable && sourceDevice.isConnected && (
+              <button onClick={() => eject(sourceDevice.mountPoint)}>
+                Eject SD Card
+              </button>
+            )}
             <button
-              onClick={() =>
-                eject(
-                  devices.find((d) => d.id === analysis.sdDeviceId)
-                    ?.mountPoint || ""
-                )
-              }
+              className="btn-primary"
+              onClick={() => {
+                setSelectedSource("");
+                setSourcePath("");
+                setSelectedTargets([]);
+                reset();
+              }}
             >
-              Eject SD Card
-            </button>
-            <button className="btn-primary" onClick={reset}>
               Import Another
             </button>
           </div>

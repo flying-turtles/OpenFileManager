@@ -80,7 +80,7 @@ function App() {
           <Import />
         </div>
         <div className={page === "transfer" ? "contents-display" : "hidden-display"}>
-          <Transfer projectId={transferProject?.id ?? null} projectTitle={transferProject?.title ?? ""} />
+          <Transfer project={transferProject} />
         </div>
         {page === "projects" && <Projects onTransferProject={handleTransferProject} />}
       </main>

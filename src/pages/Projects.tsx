@@ -5,15 +5,8 @@ import { FileTable } from "../components/FileTable";
 import { BulkDeleteModal } from "../components/BulkDeleteModal";
 import { getFileSafety, deleteFileCopy, bulkDeleteFileCopies } from "../api/commands";
 import type { Project, FileLocation, FileSafety, BulkDeleteResult, BulkDeleteEvent } from "../types";
+import { formatBytes } from "../utils/format";
 import "./Projects.css";
-
-function formatBytes(bytes: number): string {
-  if (bytes === 0) return "0 B";
-  const k = 1024;
-  const sizes = ["B", "KB", "MB", "GB", "TB"];
-  const i = Math.floor(Math.log(bytes) / Math.log(k));
-  return parseFloat((bytes / Math.pow(k, i)).toFixed(1)) + " " + sizes[i];
-}
 
 type View = "list" | "detail" | "create" | "edit";
 type SafetyFilter = "all" | "safe" | "unsafe" | "duplicates";

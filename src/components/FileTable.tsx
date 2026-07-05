@@ -5,14 +5,38 @@ import type { FileLocation, FileSafety } from "../types";
 import { resolveFilePath, openFile } from "../api/commands";
 import { SafetyBadge } from "./SafetyBadge";
 import { FilePreview } from "./FilePreview";
+import { useFocusTrap } from "../hooks/useFocusTrap";
+import { formatBytes } from "../utils/format";
 import "./FileTable.css";
 
-function formatBytes(bytes: number): string {
-  if (bytes === 0) return "0 B";
-  const k = 1024;
-  const sizes = ["B", "KB", "MB", "GB", "TB"];
-  const i = Math.floor(Math.log(bytes) / Math.log(k));
-  return parseFloat((bytes / Math.pow(k, i)).toFixed(1)) + " " + sizes[i];
+function DeleteCopyModal({ path, deleting, onCancel, onDelete }: {
+  path: string;
+  deleting: boolean;
+  onCancel: () => void;
+  onDelete: () => void;
+}) {
+  const trapRef = useFocusTrap<HTMLDivElement>();
+  return (
+    <div className="modal-overlay" onClick={() => !deleting && onCancel()} role="dialog" aria-label="Delete file copy" aria-modal="true" onKeyDown={(e) => { if (e.key === "Escape" && !deleting) onCancel(); }}>
+      <div className="modal-content" ref={trapRef} onClick={(e) => e.stopPropagation()}>
+        <h2>Delete file copy?</h2>
+        <p style={{ marginBottom: 12, wordBreak: "break-all", color: "var(--text-muted)", fontSize: 13 }}>
+          {path}
+        </p>
+        <p style={{ marginBottom: 20, color: "var(--danger)", fontSize: 13 }}>
+          This will permanently delete the file from disk. Other copies will remain.
+        </p>
+        <div className="form-actions">
+          <button onClick={onCancel} disabled={deleting}>
+            Cancel
+          </button>
+          <button className="btn-danger" onClick={onDelete} disabled={deleting}>
+            {deleting ? "Deleting..." : "Delete"}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
 }
 
 type RowItem =
@@ -252,25 +276,12 @@ export function FileTable({ files, totalCount, deviceNames, connectedDeviceIds, 
       </div>
 
       {confirmDelete && (
-        <div className="modal-overlay" onClick={() => !deleting && setConfirmDelete(null)} role="dialog" aria-label="Delete file copy" aria-modal="true">
-          <div className="modal-content" onClick={(e) => e.stopPropagation()}>
-            <h2>Delete file copy?</h2>
-            <p style={{ marginBottom: 12, wordBreak: "break-all", color: "var(--text-muted)", fontSize: 13 }}>
-              {confirmDelete.path}
-            </p>
-            <p style={{ marginBottom: 20, color: "var(--danger)", fontSize: 13 }}>
-              This will permanently delete the file from disk. Other copies will remain.
-            </p>
-            <div className="form-actions">
-              <button onClick={() => setConfirmDelete(null)} disabled={deleting}>
-                Cancel
-              </button>
-              <button className="btn-danger" onClick={handleDelete} disabled={deleting}>
-                {deleting ? "Deleting..." : "Delete"}
-              </button>
-            </div>
-          </div>
-        </div>
+        <DeleteCopyModal
+          path={confirmDelete.path}
+          deleting={deleting}
+          onCancel={() => setConfirmDelete(null)}
+          onDelete={handleDelete}
+        />
       )}
     </div>
   );

@@ -83,6 +83,14 @@ export function useTransfer() {
     }
   }, [handleEvent]);
 
+  const backToDeviceSelect = useCallback(() => {
+    setCheck(null);
+    setProgress(null);
+    setErrors([]);
+    setSelectedDeviceId("");
+    setPhase("select-device");
+  }, []);
+
   const cancel = useCallback(async () => {
     await cancelProjectTransfer();
   }, []);
@@ -108,6 +116,7 @@ export function useTransfer() {
     setProject,
     startCheck,
     continueWithAvailable,
+    backToDeviceSelect,
     cancel,
     reset,
   };

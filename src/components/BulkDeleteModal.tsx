@@ -137,7 +137,7 @@ export function BulkDeleteModal({ deviceName, files, onConfirm, onClose }: Props
   };
 
   return (
-    <div className="modal-overlay" onClick={() => !deleting && !result && onClose()} role="dialog" aria-label="Bulk delete" aria-modal="true">
+    <div className="modal-overlay" onClick={() => !deleting && !result && onClose()} role="dialog" aria-label="Bulk delete" aria-modal="true" onKeyDown={(e) => { if (e.key === "Escape" && !deleting) onClose(); }}>
       <div className="modal-content" ref={trapRef} onClick={(e) => e.stopPropagation()} style={{ maxWidth: 560 }}>
         {result ? (
           <>

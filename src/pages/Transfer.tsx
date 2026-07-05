@@ -1,21 +1,13 @@
 import { useEffect, useRef } from "react";
 import { useTransfer } from "../hooks/useTransfer";
 import { useDevices } from "../hooks/useDevices";
-
-function formatBytes(bytes: number): string {
-  if (!bytes || bytes <= 0) return "0 B";
-  const k = 1024;
-  const sizes = ["B", "KB", "MB", "GB", "TB"];
-  const i = Math.floor(Math.log(bytes) / Math.log(k));
-  return parseFloat((bytes / Math.pow(k, i)).toFixed(1)) + " " + sizes[i];
-}
+import { formatBytes } from "../utils/format";
 
 interface Props {
-  projectId: number | null;
-  projectTitle: string;
+  project: { id: number; title: string } | null;
 }
 
-export function Transfer({ projectId, projectTitle }: Props) {
+export function Transfer({ project }: Props) {
   const {
     phase,
     projectTitle: hookTitle,
@@ -26,19 +18,23 @@ export function Transfer({ projectId, projectTitle }: Props) {
     setProject,
     startCheck,
     continueWithAvailable,
+    backToDeviceSelect,
     cancel,
     reset,
   } = useTransfer();
 
   const { devices } = useDevices();
-  const prevProjectId = useRef<number | null>(null);
+  const handledRequest = useRef<{ id: number; title: string } | null>(null);
 
+  // New object identity per "Transfer to..." click, so re-selecting the
+  // same project after a reset still re-enters device selection. Deferred
+  // while a copy is running so it can't wipe an active transfer's UI.
   useEffect(() => {
-    if (projectId && projectId !== prevProjectId.current) {
-      prevProjectId.current = projectId;
-      setProject(projectId, projectTitle);
+    if (project && project !== handledRequest.current && phase !== "copying") {
+      handledRequest.current = project;
+      setProject(project.id, project.title);
     }
-  }, [projectId, projectTitle, setProject]);
+  }, [project, phase, setProject]);
 
   const connectedDevices = devices.filter((d) => d.isConnected);
   const selectedDev = connectedDevices.find((d) => d.id === selectedDeviceId);
@@ -114,7 +110,7 @@ export function Transfer({ projectId, projectTitle }: Props) {
             ))}
           </div>
           <div className="form-actions">
-            <button onClick={() => reset()}>Cancel</button>
+            <button onClick={backToDeviceSelect}>Back</button>
             <button className="btn-primary" onClick={continueWithAvailable}>
               Continue ({check.availableCount} files)
             </button>
