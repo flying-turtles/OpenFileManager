@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
 use tauri::ipc::Channel;
@@ -21,6 +21,7 @@ pub fn check_and_resolve(
     let mut total_bytes: i64 = 0;
     let mut already_on_target: u64 = 0;
     let mut resolved = Vec::new();
+    let mut seen_sources: HashSet<String> = HashSet::new();
 
     for file in files {
         // Skip if already on target device
@@ -63,6 +64,13 @@ pub fn check_and_resolve(
             .join(&best.file_path)
             .to_string_lossy()
             .to_string();
+
+        // Skip if same source file already resolved (can happen when
+        // re-scans create multiple hashes for the same physical file)
+        if !seen_sources.insert(source_path.clone()) {
+            already_on_target += 1;
+            continue;
+        }
 
         resolved.push(ResolvedTransferFile {
             blake3_hash: file.blake3_hash.clone(),
@@ -139,13 +147,13 @@ pub async fn run_transfer(
             _ => {}
         }
 
-        // Send progress before copy starts (shows which file is being copied)
+        // Send progress before copy starts (count current file as in-progress)
         let _ = channel.send(TransferEvent::CopyProgress(DeviceCopyProgress {
             device_id: dest_device_id.clone(),
             device_label: dest_label.clone(),
             bytes_copied,
             total_bytes,
-            files_copied,
+            files_copied: files_copied + 1,
             total_files,
             current_file: format!("Copying {} from {}", file.file_name, file.source_device_label),
         }));
@@ -259,7 +267,7 @@ pub async fn run_transfer(
                                     device_label: dest_label.clone(),
                                     bytes_copied: bytes_copied + file_bytes,
                                     total_bytes,
-                                    files_copied,
+                                    files_copied: files_copied + 1,
                                     total_files,
                                     current_file: format!("Copying {} from {}", file.file_name, file.source_device_label),
                                 }));
@@ -293,8 +301,8 @@ pub async fn run_transfer(
 
         let _ = writer.flush().await;
 
-        bytes_copied += file.file_size;
         files_copied += 1;
+        bytes_copied += file.file_size;
 
         let relative_path = dest_path
             .strip_prefix(&dest_mount)
