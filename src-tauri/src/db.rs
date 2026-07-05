@@ -1284,3 +1284,29 @@ pub async fn get_image_hashes(
     .await?;
     Ok(rows)
 }
+
+// --- Global search ---
+
+pub async fn search_files(
+    pool: &DbPool,
+    query: &str,
+    limit: i64,
+) -> Result<Vec<FileLocation>, AppError> {
+    let escaped = query
+        .replace('\\', "\\\\")
+        .replace('%', "\\%")
+        .replace('_', "\\_");
+    let pattern = format!("%{}%", escaped);
+    let rows = sqlx::query_as::<_, FileLocation>(
+        "SELECT * FROM file_locations
+         WHERE file_name LIKE ? ESCAPE '\\' OR file_path LIKE ? ESCAPE '\\'
+         ORDER BY file_name
+         LIMIT ?",
+    )
+    .bind(&pattern)
+    .bind(&pattern)
+    .bind(limit)
+    .fetch_all(pool)
+    .await?;
+    Ok(rows)
+}

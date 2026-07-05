@@ -5,9 +5,10 @@ import {
   saveBackupSettings,
   testBackupConnection,
   runDatabaseBackup,
+  runDatabaseRestore,
 } from "../api/commands";
 
-export type BackupPhase = "idle" | "running" | "done" | "error";
+export type BackupPhase = "idle" | "running" | "restoring" | "done" | "restored" | "error";
 
 export interface BackupProgress {
   table: string;
@@ -83,11 +84,48 @@ export function useBackup() {
     }
   }, []);
 
+  const restore = useCallback(async () => {
+    setPhase("restoring");
+    setError("");
+    setProgress(null);
+    setTotalRows(0);
+    let tablesDone = 0;
+    let totalTables = 0;
+    try {
+      await runDatabaseRestore((event) => {
+        if ("Started" in event) {
+          totalTables = event.Started.totalTables;
+          setProgress({ table: "", rowsCopied: 0, totalRows: 0, tablesDone, totalTables });
+        } else if ("TableProgress" in event) {
+          setProgress({
+            table: event.TableProgress.table,
+            rowsCopied: event.TableProgress.rowsCopied,
+            totalRows: event.TableProgress.totalRows,
+            tablesDone,
+            totalTables,
+          });
+        } else if ("TableDone" in event) {
+          tablesDone += 1;
+          setProgress((p) => (p ? { ...p, tablesDone } : p));
+        } else if ("Finished" in event) {
+          setTotalRows(event.Finished.totalRows);
+          setPhase("restored");
+        } else if ("Error" in event) {
+          setError(event.Error.message);
+          setPhase("error");
+        }
+      });
+    } catch (e) {
+      setError(String(e));
+      setPhase("error");
+    }
+  }, []);
+
   const resetStatus = useCallback(() => {
     setPhase("idle");
     setError("");
     setProgress(null);
   }, []);
 
-  return { settings, loading, phase, progress, error, totalRows, save, test, backup, resetStatus };
+  return { settings, loading, phase, progress, error, totalRows, save, test, backup, restore, resetStatus };
 }

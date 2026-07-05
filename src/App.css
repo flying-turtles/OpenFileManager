@@ -158,6 +158,66 @@ body {
   border-color: var(--danger);
 }
 
+.stat-card.stat-clickable {
+  cursor: pointer;
+  transition: border-color 0.15s, background 0.15s;
+}
+
+.stat-card.stat-clickable:hover {
+  border-color: var(--accent);
+  background: var(--bg-hover);
+}
+
+/* Duplicate waste report (Dashboard) */
+.waste-section {
+  margin-top: 24px;
+}
+
+.waste-header {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+
+.waste-header button {
+  margin-left: auto;
+}
+
+.waste-list {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  overflow: hidden;
+}
+
+.waste-row {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 8px 16px;
+  border-bottom: 1px solid var(--border);
+  font-size: 13px;
+}
+
+.waste-row:last-child {
+  border-bottom: none;
+}
+
+.waste-name {
+  flex: 1;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.waste-bytes {
+  color: var(--warn);
+  font-weight: 600;
+  min-width: 100px;
+  text-align: right;
+}
+
 .stat-value {
   font-size: 32px;
   font-weight: 700;

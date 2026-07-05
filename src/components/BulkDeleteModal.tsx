@@ -202,7 +202,7 @@ export function BulkDeleteModal({ deviceName, files, onConfirm, onClose }: Props
                   </div>
                 )}
                 <p className="bulk-delete-warning">
-                  This will permanently delete {filesToDelete.length} file{filesToDelete.length !== 1 ? "s" : ""} from "{deviceName}". This cannot be undone.
+                  {filesToDelete.length} file{filesToDelete.length !== 1 ? "s" : ""} from "{deviceName}" will be moved to the Trash.
                 </p>
                 <div className="bulk-delete-file-list">
                   {hasSameDriveDuplicates ? (
@@ -243,7 +243,7 @@ export function BulkDeleteModal({ deviceName, files, onConfirm, onClose }: Props
             ) : (
               <>
                 <p className="bulk-delete-warning">
-                  {filesToDelete.length} file{filesToDelete.length !== 1 ? "s" : ""} selected for deletion. This cannot be undone.
+                  {filesToDelete.length} file{filesToDelete.length !== 1 ? "s" : ""} selected — they will be moved to the Trash.
                 </p>
                 <div className="bulk-delete-file-list">
                   {sameDriveGroups.map((group) => (

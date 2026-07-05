@@ -24,7 +24,7 @@ function DeleteCopyModal({ path, deleting, onCancel, onDelete }: {
           {path}
         </p>
         <p style={{ marginBottom: 20, color: "var(--danger)", fontSize: 13 }}>
-          This will permanently delete the file from disk. Other copies will remain.
+          The file will be moved to the Trash. Other copies will remain.
         </p>
         <div className="form-actions">
           <button onClick={onCancel} disabled={deleting}>

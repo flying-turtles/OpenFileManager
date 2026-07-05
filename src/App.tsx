@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback } from "react";
 import type { StorageDevice } from "./types";
-import { Dashboard } from "./pages/Dashboard";
+import { Dashboard, type FilesFilter } from "./pages/Dashboard";
 import { Devices } from "./pages/Devices";
 import { Scanner } from "./pages/Scanner";
 import { FileBrowser } from "./pages/FileBrowser";
@@ -17,6 +17,7 @@ function App() {
   const [page, setPage] = useState<Page>("dashboard");
   const [scanDevice, setScanDevice] = useState<StorageDevice | undefined>();
   const [transferProject, setTransferProject] = useState<{ id: number; title: string } | null>(null);
+  const [filesFilter, setFilesFilter] = useState<FilesFilter>("all");
   const [theme, setTheme] = useState(() => localStorage.getItem("theme") || "system");
 
   useEffect(() => {
@@ -38,6 +39,11 @@ function App() {
     setPage("transfer");
   }, []);
 
+  const handleOpenFiles = useCallback((filter: FilesFilter) => {
+    setFilesFilter(filter);
+    setPage("files");
+  }, []);
+
   return (
     <div className="app">
       <nav className="sidebar">
@@ -51,7 +57,7 @@ function App() {
         <button className={page === "scanner" ? "active" : ""} onClick={() => setPage("scanner")}>
           Scanner
         </button>
-        <button className={page === "files" ? "active" : ""} onClick={() => setPage("files")}>
+        <button className={page === "files" ? "active" : ""} onClick={() => { setFilesFilter("all"); setPage("files"); }}>
           Files
         </button>
         <button className={page === "import" ? "active" : ""} onClick={() => setPage("import")}>
@@ -78,12 +84,14 @@ function App() {
         </button>
       </nav>
       <main className="content">
-        {page === "dashboard" && <Dashboard />}
+        {page === "dashboard" && (
+          <Dashboard onOpenFiles={handleOpenFiles} onOpenDevices={() => setPage("devices")} />
+        )}
         {page === "devices" && <Devices onScanDevice={handleScanDevice} />}
         <div className={page === "scanner" ? "contents-display" : "hidden-display"}>
           <Scanner initialDevice={scanDevice} />
         </div>
-        {page === "files" && <FileBrowser />}
+        {page === "files" && <FileBrowser initialFilter={filesFilter} />}
         <div className={page === "import" ? "contents-display" : "hidden-display"}>
           <Import />
         </div>

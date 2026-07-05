@@ -336,3 +336,18 @@ export async function getSimilarGroups(
 ): Promise<SimilarGroup[]> {
   return invoke("get_similar_groups", { maxDistance, deviceId });
 }
+
+export async function runDatabaseRestore(
+  onEvent: (event: BackupEvent) => void
+): Promise<void> {
+  const channel = new Channel<BackupEvent>();
+  channel.onmessage = onEvent;
+  return invoke("run_database_restore", { onEvent: channel });
+}
+
+export async function searchFiles(
+  query: string,
+  limit?: number
+): Promise<FileLocation[]> {
+  return invoke("search_files", { query, limit });
+}

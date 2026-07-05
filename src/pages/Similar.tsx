@@ -119,9 +119,8 @@ function DeleteSimilarModal({ files, onConfirm, onClose }: {
           <>
             <h2>Delete similar pictures?</h2>
             <p className="bulk-delete-warning">
-              This permanently deletes {allIds.length} file cop
-              {allIds.length !== 1 ? "ies" : "y"} ({formatBytes(totalBytes)}) from disk. This
-              cannot be undone.
+              {allIds.length} file cop{allIds.length !== 1 ? "ies" : "y"} (
+              {formatBytes(totalBytes)}) will be moved to the Trash.
             </p>
             {skippedOffline > 0 && (
               <p className="text-muted-color text-sm" style={{ marginBottom: 8 }}>

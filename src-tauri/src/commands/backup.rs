@@ -120,3 +120,30 @@ pub async fn run_database_backup(
         }
     }
 }
+
+#[tauri::command]
+pub async fn run_database_restore(
+    state: State<'_, AppState>,
+    on_event: Channel<BackupEvent>,
+) -> Result<(), AppError> {
+    let pg = connect_from_settings(&state).await?;
+    let result = backup::run_restore(&state.pool, &pg, &on_event).await;
+    pg.close().await;
+
+    match result {
+        Ok(total_rows) => {
+            let now = chrono::Local::now().format("%Y-%m-%d %H:%M:%S").to_string();
+            let _ = on_event.send(BackupEvent::Finished {
+                total_rows,
+                finished_at: now,
+            });
+            Ok(())
+        }
+        Err(e) => {
+            let _ = on_event.send(BackupEvent::Error {
+                message: e.to_string(),
+            });
+            Err(e)
+        }
+    }
+}

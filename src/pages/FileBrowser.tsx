@@ -3,7 +3,10 @@ import { useDevices } from "../hooks/useDevices";
 import { useFiles } from "../hooks/useFiles";
 import { FileTable } from "../components/FileTable";
 import { BulkDeleteModal } from "../components/BulkDeleteModal";
+import { searchFiles } from "../api/commands";
 import type { FileLocation } from "../types";
+
+const SEARCH_LIMIT = 1000;
 
 type SortKey = "name" | "size" | "modified";
 type SortDir = "asc" | "desc";
@@ -23,7 +26,11 @@ function sortFiles(files: FileLocation[], key: SortKey, dir: SortDir): FileLocat
   return dir === "desc" ? sorted.reverse() : sorted;
 }
 
-export function FileBrowser() {
+interface Props {
+  initialFilter?: FilterMode;
+}
+
+export function FileBrowser({ initialFilter }: Props) {
   const { devices } = useDevices();
   const {
     files, unsafeFiles, safeFiles, duplicateFiles, loading, totalCount,
@@ -31,7 +38,11 @@ export function FileBrowser() {
     deleteFileCopy, bulkDeleteCopies, loadFileSafety,
   } = useFiles();
   const [selectedDevice, setSelectedDevice] = useState("");
-  const [filter, setFilter] = useState<FilterMode>("all");
+  const [filter, setFilter] = useState<FilterMode>(initialFilter ?? "all");
+  const [search, setSearch] = useState("");
+  const [searchResults, setSearchResults] = useState<FileLocation[]>([]);
+  const [searchPending, setSearchPending] = useState(false);
+  const searchActive = search.trim().length >= 2;
   const [extFilter, setExtFilter] = useState("");
   const [sortKey, setSortKey] = useState<SortKey>("name");
   const [sortDir, setSortDir] = useState<SortDir>("asc");
@@ -109,8 +120,29 @@ export function FileBrowser() {
     setSameDriveOnly(false);
   }, [filter, selectedDevice]);
 
-  const rawFiles: FileLocation[] =
-    filter === "all"
+  // Debounced global search across all drives (including disconnected)
+  useEffect(() => {
+    if (!searchActive) {
+      setSearchResults([]);
+      setSearchPending(false);
+      return;
+    }
+    setSearchPending(true);
+    const handle = setTimeout(async () => {
+      try {
+        setSearchResults(await searchFiles(search.trim(), SEARCH_LIMIT));
+      } catch (e) {
+        console.error("Search failed:", e);
+      } finally {
+        setSearchPending(false);
+      }
+    }, 300);
+    return () => clearTimeout(handle);
+  }, [search, searchActive]);
+
+  const rawFiles: FileLocation[] = searchActive
+    ? searchResults
+    : filter === "all"
       ? files
       : (filter === "unsafe" ? unsafeFiles : filter === "safe" ? safeFiles : duplicateFiles)
           .filter((sf) => sf.locations.length > 0)
@@ -142,8 +174,11 @@ export function FileBrowser() {
     }
   };
 
-  const emptyMsg =
-    filter === "unsafe"
+  const emptyMsg = searchActive
+    ? searchPending
+      ? "Searching..."
+      : "No files match this search"
+    : filter === "unsafe"
       ? "No unsafe files found"
       : filter === "safe"
         ? "No safe files found"
@@ -155,6 +190,21 @@ export function FileBrowser() {
     <div className="page">
       <h1>Files</h1>
       <div className="browser-controls">
+        <input
+          type="text"
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+          placeholder="Search all drives..."
+          style={{ minWidth: 220 }}
+        />
+        {searchActive && (
+          <span className="file-table-status">
+            {searchPending
+              ? "Searching..."
+              : `${searchResults.length.toLocaleString()}${searchResults.length === SEARCH_LIMIT ? "+" : ""} results`}
+          </span>
+        )}
+        {!searchActive && (
         <div className="filter-toggle">
           <button
             className={filter === "all" ? "active" : ""}
@@ -181,7 +231,8 @@ export function FileBrowser() {
             Duplicates
           </button>
         </div>
-        {filter === "all" && (
+        )}
+        {!searchActive && filter === "all" && (
           <select
             value={selectedDevice}
             onChange={(e) => setSelectedDevice(e.target.value)}
@@ -194,7 +245,7 @@ export function FileBrowser() {
             ))}
           </select>
         )}
-        {filter === "duplicates" && (
+        {!searchActive && filter === "duplicates" && (
           <>
             <select
               value={dupDeviceFilter}
@@ -274,7 +325,7 @@ export function FileBrowser() {
       ) : (
         <FileTable
           files={displayFiles}
-          totalCount={extFilter ? undefined : totalCount}
+          totalCount={searchActive || extFilter ? undefined : totalCount}
           deviceNames={deviceNames}
           connectedDeviceIds={connectedDeviceIds}
           selectedDeviceId={filter === "all" ? selectedDevice : undefined}

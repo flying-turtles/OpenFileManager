@@ -1,9 +1,48 @@
 import { useState, useEffect } from "react";
 import { useBackup } from "../hooks/useBackup";
+import { useFocusTrap } from "../hooks/useFocusTrap";
+
+function RestoreConfirmModal({ onConfirm, onClose }: { onConfirm: () => void; onClose: () => void }) {
+  const trapRef = useFocusTrap<HTMLDivElement>();
+  const [confirmText, setConfirmText] = useState("");
+  return (
+    <div className="modal-overlay" onClick={onClose} role="dialog" aria-label="Restore from server" aria-modal="true" onKeyDown={(e) => { if (e.key === "Escape") onClose(); }}>
+      <div className="modal-content" ref={trapRef} onClick={(e) => e.stopPropagation()}>
+        <h2>Restore from server?</h2>
+        <p className="bulk-delete-warning">
+          This replaces the entire local database (devices, files, projects, network drives) with
+          the server backup. No files on disk are touched, but any local index changes since the
+          last backup are lost.
+        </p>
+        <div className="form-group" style={{ marginTop: 16 }}>
+          <label>Type "<strong>restore</strong>" to confirm</label>
+          <input
+            type="text"
+            value={confirmText}
+            onChange={(e) => setConfirmText(e.target.value)}
+            placeholder="restore"
+            autoFocus
+          />
+        </div>
+        <div className="form-actions">
+          <button onClick={onClose}>Cancel</button>
+          <button
+            className="btn-danger"
+            disabled={confirmText !== "restore"}
+            onClick={() => { onClose(); onConfirm(); }}
+          >
+            Restore
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
 
 export function Backup() {
-  const { settings, loading, phase, progress, error, totalRows, save, test, backup, resetStatus } =
+  const { settings, loading, phase, progress, error, totalRows, save, test, backup, restore, resetStatus } =
     useBackup();
+  const [showRestoreConfirm, setShowRestoreConfirm] = useState(false);
 
   const [host, setHost] = useState("");
   const [port, setPort] = useState("5432");
@@ -156,7 +195,7 @@ export function Backup() {
               <p className="text-muted-color text-sm">No backup yet</p>
             )}
 
-            {phase === "running" && progress && (
+            {(phase === "running" || phase === "restoring") && progress && (
               <div className="progress-container">
                 <div className="progress-bar">
                   <div className="progress-fill" style={{ width: `${pct}%` }} />
@@ -179,23 +218,52 @@ export function Backup() {
                 Backup complete — {totalRows.toLocaleString()} rows copied to {host}
               </div>
             )}
+            {phase === "restored" && (
+              <div className="success-msg" style={{ marginBottom: 12 }}>
+                Restore complete — {totalRows.toLocaleString()} rows restored from {host}
+              </div>
+            )}
             {phase === "error" && error && (
               <div className="error-msg" style={{ marginBottom: 12 }}>{error}</div>
             )}
 
             <div className="form-actions">
-              {(phase === "done" || phase === "error") && (
+              {(phase === "done" || phase === "restored" || phase === "error") && (
                 <button onClick={resetStatus}>Dismiss</button>
               )}
               <button
                 className="btn-primary"
                 onClick={backup}
-                disabled={phase === "running" || !configured}
+                disabled={phase === "running" || phase === "restoring" || !configured}
               >
                 {phase === "running" ? "Backing up..." : "Backup Now"}
               </button>
             </div>
           </div>
+
+          <div className="import-section" style={{ marginTop: 16 }}>
+            <h3>Restore</h3>
+            <p className="text-muted-color text-sm">
+              Replace the local database with the server backup. Use this after a data loss — the
+              local database is otherwise the source of truth.
+            </p>
+            <div className="form-actions">
+              <button
+                className="btn-danger"
+                onClick={() => setShowRestoreConfirm(true)}
+                disabled={phase === "running" || phase === "restoring" || !configured}
+              >
+                {phase === "restoring" ? "Restoring..." : "Restore from Server"}
+              </button>
+            </div>
+          </div>
+
+          {showRestoreConfirm && (
+            <RestoreConfirmModal
+              onConfirm={restore}
+              onClose={() => setShowRestoreConfirm(false)}
+            />
+          )}
         </>
       )}
     </div>

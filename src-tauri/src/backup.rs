@@ -252,3 +252,114 @@ pub async fn run_backup(
 
     Ok(total_rows)
 }
+
+fn read_pg_row(
+    row: &sqlx::postgres::PgRow,
+    columns: &[(&str, ColType)],
+) -> Result<Vec<Val>, AppError> {
+    use sqlx::Row as _;
+    let mut vals = Vec::with_capacity(columns.len());
+    for (i, (name, col_type)) in columns.iter().enumerate() {
+        let val = match col_type {
+            ColType::Int => Val::Int(
+                row.try_get::<i64, _>(i)
+                    .map_err(|e| AppError::General(format!("column {}: {}", name, e)))?,
+            ),
+            ColType::Text => Val::Text(
+                row.try_get::<String, _>(i)
+                    .map_err(|e| AppError::General(format!("column {}: {}", name, e)))?,
+            ),
+            ColType::OptText => Val::OptText(
+                row.try_get::<Option<String>, _>(i)
+                    .map_err(|e| AppError::General(format!("column {}: {}", name, e)))?,
+            ),
+        };
+        vals.push(val);
+    }
+    Ok(vals)
+}
+
+/// Pull the server copy back into the local SQLite database. All backed-up
+/// tables are replaced inside a single local transaction; the dir cache is
+/// cleared so the next scan rebuilds it against the restored index.
+pub async fn run_restore(
+    sqlite: &DbPool,
+    pg: &PgPool,
+    channel: &Channel<BackupEvent>,
+) -> Result<u64, AppError> {
+    let _ = channel.send(BackupEvent::Started {
+        total_tables: TABLES.len() as u64,
+    });
+
+    let mut tx = sqlite.begin().await?;
+    let mut total_rows: u64 = 0;
+
+    for spec in TABLES {
+        let col_names: Vec<&str> = spec.columns.iter().map(|(n, _)| *n).collect();
+        let select = format!("SELECT {} FROM {}", col_names.join(", "), spec.name);
+        let rows = sqlx::query(&select).fetch_all(pg).await.map_err(|e| {
+            AppError::General(format!(
+                "Could not read {} from the server (was a backup run before?): {}",
+                spec.name, e
+            ))
+        })?;
+        let table_total = rows.len() as u64;
+
+        sqlx::query(&format!("DELETE FROM {}", spec.name))
+            .execute(&mut *tx)
+            .await?;
+
+        let mut copied: u64 = 0;
+        for chunk in rows.chunks(INSERT_CHUNK) {
+            let mut sql = format!(
+                "INSERT INTO {} ({}) VALUES ",
+                spec.name,
+                col_names.join(", ")
+            );
+            for (r, _) in chunk.iter().enumerate() {
+                if r > 0 {
+                    sql.push(',');
+                }
+                sql.push('(');
+                for c in 0..spec.columns.len() {
+                    if c > 0 {
+                        sql.push(',');
+                    }
+                    sql.push('?');
+                }
+                sql.push(')');
+            }
+
+            let mut query = sqlx::query(&sql);
+            for row in chunk {
+                for val in read_pg_row(row, spec.columns)? {
+                    query = match val {
+                        Val::Text(s) => query.bind(s),
+                        Val::OptText(o) => query.bind(o),
+                        Val::Int(n) => query.bind(n),
+                    };
+                }
+            }
+            query.execute(&mut *tx).await?;
+
+            copied += chunk.len() as u64;
+            let _ = channel.send(BackupEvent::TableProgress {
+                table: spec.name.to_string(),
+                rows_copied: copied,
+                total_rows: table_total,
+            });
+        }
+
+        total_rows += table_total;
+        let _ = channel.send(BackupEvent::TableDone {
+            table: spec.name.to_string(),
+            rows: table_total,
+        });
+    }
+
+    // Dir cache refers to the pre-restore index — rebuild it on next scan
+    sqlx::query("DELETE FROM dir_cache").execute(&mut *tx).await?;
+
+    tx.commit().await?;
+    Ok(total_rows)
+}

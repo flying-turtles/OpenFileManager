@@ -64,6 +64,21 @@ pub async fn get_duplicate_files_page(
     Ok(UnsafeFilePageResult { files, total, has_more })
 }
 
+/// Move a file to the Trash (recoverable) instead of permanently deleting it.
+/// External volumes use their own .Trashes via the OS.
+async fn move_to_trash(full_path: std::path::PathBuf) -> Result<(), AppError> {
+    tokio::task::spawn_blocking(move || {
+        trash::delete(&full_path)
+            .map_err(|e| AppError::General(format!("Could not move to Trash: {}", e)))?;
+        if full_path.exists() {
+            return Err(AppError::General("File still exists after moving to Trash".into()));
+        }
+        Ok(())
+    })
+    .await
+    .map_err(|e| AppError::General(format!("task join error: {}", e)))?
+}
+
 #[tauri::command]
 pub async fn delete_file_copy(
     state: State<'_, AppState>,
@@ -73,11 +88,7 @@ pub async fn delete_file_copy(
     let device = db::get_device(&state.pool, &loc.device_id).await?;
     let full_path = std::path::Path::new(&device.mount_point).join(&loc.file_path);
 
-    tokio::fs::remove_file(&full_path).await?;
-
-    if full_path.exists() {
-        return Err(AppError::General("File still exists after deletion".into()));
-    }
+    move_to_trash(full_path).await?;
 
     db::delete_file_location(&state.pool, location_id).await?;
 
@@ -180,10 +191,7 @@ pub async fn bulk_delete_file_copies(
             let loc = db::get_file_location_by_id(&state.pool, id).await?;
             let device = db::get_device(&state.pool, &loc.device_id).await?;
             let full_path = std::path::Path::new(&device.mount_point).join(&loc.file_path);
-            tokio::fs::remove_file(&full_path).await?;
-            if full_path.exists() {
-                return Err(AppError::General("File still exists after deletion".into()));
-            }
+            move_to_trash(full_path).await?;
             db::delete_file_location_no_cleanup(&state.pool, id).await?;
             Ok(())
         }
@@ -208,4 +216,16 @@ pub async fn bulk_delete_file_copies(
     let result = BulkDeleteResult { succeeded, failed };
     let _ = on_event.send(BulkDeleteEvent::Complete(result.clone()));
     Ok(result)
+}
+
+#[tauri::command]
+pub async fn search_files(
+    state: State<'_, AppState>,
+    query: String,
+    limit: Option<i64>,
+) -> Result<Vec<FileLocation>, AppError> {
+    if query.trim().is_empty() {
+        return Ok(Vec::new());
+    }
+    db::search_files(&state.pool, query.trim(), limit.unwrap_or(1000)).await
 }
