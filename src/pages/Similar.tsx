@@ -165,8 +165,8 @@ export function Similar() {
   const { devices } = useDevices();
   const [maxDistance, setMaxDistance] = useState(5);
   const [deviceFilter, setDeviceFilter] = useState("");
-  // keeper per group: blake3Hash of the file to keep
-  const [keepers, setKeepers] = useState<Record<number, string>>({});
+  // keepers per group: blake3 hashes of the files to keep (multi-select)
+  const [keepers, setKeepers] = useState<Record<number, string[]>>({});
   const [deleteTarget, setDeleteTarget] = useState<number | null>(null);
 
   const connectedDeviceIds = useMemo(
@@ -174,13 +174,23 @@ export function Similar() {
     [devices]
   );
 
-  const keeperFor = (groupIdx: number, group: SimilarGroup) =>
-    keepers[groupIdx] ?? group.files[0].blake3Hash;
+  const keepersFor = (groupIdx: number, group: SimilarGroup): string[] =>
+    keepers[groupIdx] ?? [group.files[0].blake3Hash];
+
+  const toggleKeeper = (groupIdx: number, group: SimilarGroup, hash: string) => {
+    setKeepers((k) => {
+      const current = k[groupIdx] ?? [group.files[0].blake3Hash];
+      const next = current.includes(hash)
+        ? current.filter((h) => h !== hash)
+        : [...current, hash];
+      return { ...k, [groupIdx]: next };
+    });
+  };
 
   const deletionPlan = (groupIdx: number, group: SimilarGroup) => {
-    const keeper = keeperFor(groupIdx, group);
+    const keep = new Set(keepersFor(groupIdx, group));
     return group.files
-      .filter((f) => f.blake3Hash !== keeper)
+      .filter((f) => !keep.has(f.blake3Hash))
       .map((file) => {
         const connected = file.locations.filter((l) => connectedDeviceIds.has(l.deviceId));
         return {
@@ -208,8 +218,8 @@ export function Similar() {
     <div className="page">
       <h1>Similar Pictures</h1>
       <p className="text-muted-color text-sm" style={{ marginBottom: 16 }}>
-        Finds pictures that look alike but are not exact duplicates — pick the one to keep and
-        delete the rest.
+        Finds pictures that look alike but are not exact duplicates — click pictures to toggle
+        keep/delete, then delete everything not kept.
       </p>
 
       {error && <div className="error-msg">{error}</div>}
@@ -276,7 +286,7 @@ export function Similar() {
 
       {phase === "ready" &&
         groups.map((group, gi) => {
-          const keeper = keeperFor(gi, group);
+          const keeperSet = new Set(keepersFor(gi, group));
           const plan = deletionPlan(gi, group);
           const deletableCount = plan.reduce((s, p) => s + p.locationIds.length, 0);
           const savings = plan.reduce((s, p) => s + p.file.fileSize * p.locationIds.length, 0);
@@ -284,12 +294,13 @@ export function Similar() {
             <div key={group.files[0].blake3Hash} className="similar-group">
               <div className="similar-group-header">
                 <span>
-                  {group.files.length} similar pictures
+                  {group.files.length} similar pictures · {keeperSet.size} kept
                   {savings > 0 && ` · save ${formatBytes(savings)}`}
                 </span>
                 <button
                   className="btn-danger"
-                  disabled={deletableCount === 0}
+                  disabled={deletableCount === 0 || keeperSet.size === 0}
+                  title={keeperSet.size === 0 ? "Select at least one picture to keep" : undefined}
                   onClick={() => setDeleteTarget(gi)}
                 >
                   Keep selected, delete rest ({deletableCount})
@@ -297,7 +308,7 @@ export function Similar() {
               </div>
               <div className="similar-grid">
                 {group.files.map((file) => {
-                  const isKeeper = file.blake3Hash === keeper;
+                  const isKeeper = keeperSet.has(file.blake3Hash);
                   const offline = file.locations.every(
                     (l) => !connectedDeviceIds.has(l.deviceId)
                   );
@@ -305,13 +316,14 @@ export function Similar() {
                     <div
                       key={file.blake3Hash}
                       className={`similar-card ${isKeeper ? "keeper" : ""}`}
-                      onClick={() => setKeepers((k) => ({ ...k, [gi]: file.blake3Hash }))}
+                      onClick={() => toggleKeeper(gi, group, file.blake3Hash)}
                       role="button"
                       tabIndex={0}
+                      aria-pressed={isKeeper}
                       onKeyDown={(e) => {
                         if (e.key === "Enter" || e.key === " ") {
                           e.preventDefault();
-                          setKeepers((k) => ({ ...k, [gi]: file.blake3Hash }));
+                          toggleKeeper(gi, group, file.blake3Hash);
                         }
                       }}
                     >
