@@ -6,6 +6,7 @@ mod network;
 mod preview;
 mod projects;
 mod scan;
+mod similar;
 mod transfer;
 
 use std::sync::Arc;
@@ -26,6 +27,7 @@ pub struct AppState {
     pub import_cancel_token: Arc<Mutex<Option<CancellationToken>>>,
     pub import_analysis: Arc<Mutex<Option<Arc<ImportAnalysis>>>>,
     pub transfer_cancel_token: Arc<Mutex<Option<CancellationToken>>>,
+    pub similar_cancel_token: Arc<Mutex<Option<CancellationToken>>>,
     pub transfer_resolved: Arc<Mutex<Option<(Vec<ResolvedTransferFile>, String, String, String)>>>,
 }
 
@@ -45,4 +47,5 @@ pub use network::*;
 pub use preview::*;
 pub use projects::*;
 pub use scan::*;
+pub use similar::*;
 pub use transfer::*;

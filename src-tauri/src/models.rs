@@ -326,3 +326,28 @@ pub enum BackupEvent {
     Finished { total_rows: u64, finished_at: String },
     Error { message: String },
 }
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SimilarFile {
+    pub blake3_hash: String,
+    pub representative_name: String,
+    pub file_size: i64,
+    pub locations: Vec<FileLocation>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SimilarGroup {
+    pub files: Vec<SimilarFile>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum SimilarScanEvent {
+    #[serde(rename_all = "camelCase")]
+    Started { total: u64 },
+    Progress { processed: u64, total: u64 },
+    Finished { hashed: u64, failed: u64 },
+    Error { message: String },
+    Cancelled,
+}

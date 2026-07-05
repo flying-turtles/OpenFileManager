@@ -224,3 +224,21 @@ export type BackupEvent =
   | { TableDone: { table: string; rows: number } }
   | { Finished: { totalRows: number; finishedAt: string } }
   | { Error: { message: string } };
+
+export interface SimilarFile {
+  blake3Hash: string;
+  representativeName: string;
+  fileSize: number;
+  locations: FileLocation[];
+}
+
+export interface SimilarGroup {
+  files: SimilarFile[];
+}
+
+export type SimilarScanEvent =
+  | { Started: { total: number } }
+  | { Progress: { processed: number; total: number } }
+  | { Finished: { hashed: number; failed: number } }
+  | { Error: { message: string } }
+  | "Cancelled";

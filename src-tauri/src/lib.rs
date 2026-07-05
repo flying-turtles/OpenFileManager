@@ -8,6 +8,7 @@ mod importer;
 mod models;
 mod network;
 mod scanner;
+mod similarity;
 mod transfer;
 
 use std::sync::Arc;
@@ -47,6 +48,7 @@ pub fn run() {
                 import_analysis: Arc::new(Mutex::new(None)),
                 transfer_cancel_token: Arc::new(Mutex::new(None)),
                 transfer_resolved: Arc::new(Mutex::new(None)),
+                similar_cancel_token: Arc::new(Mutex::new(None)),
             });
 
             let handle = app.handle().clone();
@@ -107,6 +109,9 @@ pub fn run() {
             commands::save_backup_settings,
             commands::test_backup_connection,
             commands::run_database_backup,
+            commands::scan_similar_pictures,
+            commands::cancel_similar_scan,
+            commands::get_similar_groups,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

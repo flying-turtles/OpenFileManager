@@ -20,6 +20,8 @@ import type {
   BulkDeleteEvent,
   BackupSettings,
   BackupEvent,
+  SimilarGroup,
+  SimilarScanEvent,
 } from "../types";
 
 export async function detectDevices(): Promise<StorageDevice[]> {
@@ -313,4 +315,22 @@ export async function runDatabaseBackup(
   const channel = new Channel<BackupEvent>();
   channel.onmessage = onEvent;
   return invoke("run_database_backup", { onEvent: channel });
+}
+
+export async function scanSimilarPictures(
+  onEvent: (event: SimilarScanEvent) => void
+): Promise<void> {
+  const channel = new Channel<SimilarScanEvent>();
+  channel.onmessage = onEvent;
+  return invoke("scan_similar_pictures", { onEvent: channel });
+}
+
+export async function cancelSimilarScan(): Promise<void> {
+  return invoke("cancel_similar_scan");
+}
+
+export async function getSimilarGroups(
+  maxDistance?: number
+): Promise<SimilarGroup[]> {
+  return invoke("get_similar_groups", { maxDistance });
 }

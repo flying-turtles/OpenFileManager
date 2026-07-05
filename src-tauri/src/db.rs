@@ -45,6 +45,8 @@ pub async fn run_migrations(pool: &DbPool) -> Result<(), AppError> {
     sqlx::raw_sql(sql7).execute(pool).await?;
     let sql8 = include_str!("../migrations/008_backup_settings.sql");
     sqlx::raw_sql(sql8).execute(pool).await?;
+    let sql9 = include_str!("../migrations/009_image_hashes.sql");
+    sqlx::raw_sql(sql9).execute(pool).await?;
     // Purge any existing dotfiles from the database
     let _ = purge_dotfiles(pool).await;
     Ok(())
@@ -1214,4 +1216,71 @@ pub async fn set_last_backup_at(pool: &DbPool, when: &str) -> Result<(), AppErro
         .execute(pool)
         .await?;
     Ok(())
+}
+
+
+// --- Image perceptual hashes ---
+
+/// One connected location per unique image file that has no perceptual hash yet.
+pub async fn get_unhashed_images(
+    pool: &DbPool,
+    connected_ids: &[String],
+    extensions: &[&str],
+) -> Result<Vec<(String, String, String)>, AppError> {
+    if connected_ids.is_empty() {
+        return Ok(Vec::new());
+    }
+    let dev_ph: String = connected_ids.iter().map(|_| "?").collect::<Vec<_>>().join(",");
+    let ext_ph: String = extensions.iter().map(|_| "?").collect::<Vec<_>>().join(",");
+    let sql = format!(
+        "SELECT fl.blake3_hash, fl.device_id, fl.file_path
+         FROM file_locations fl
+         JOIN files f ON f.blake3_hash = fl.blake3_hash
+         LEFT JOIN image_hashes ih ON ih.blake3_hash = fl.blake3_hash
+         WHERE ih.blake3_hash IS NULL
+           AND f.extension IN ({})
+           AND fl.device_id IN ({})
+         GROUP BY fl.blake3_hash",
+        ext_ph, dev_ph
+    );
+    let mut query = sqlx::query_as::<_, (String, String, String)>(&sql);
+    for ext in extensions {
+        query = query.bind(*ext);
+    }
+    for id in connected_ids {
+        query = query.bind(id);
+    }
+    Ok(query.fetch_all(pool).await?)
+}
+
+pub async fn upsert_image_hash(
+    pool: &DbPool,
+    blake3_hash: &str,
+    dhash: Option<i64>,
+) -> Result<(), AppError> {
+    sqlx::query(
+        "INSERT INTO image_hashes (blake3_hash, dhash) VALUES (?, ?)
+         ON CONFLICT(blake3_hash) DO UPDATE SET dhash = excluded.dhash, hashed_at = datetime('now')",
+    )
+    .bind(blake3_hash)
+    .bind(dhash)
+    .execute(pool)
+    .await?;
+    Ok(())
+}
+
+/// All successfully hashed images that still have at least one location.
+pub async fn get_image_hashes(
+    pool: &DbPool,
+) -> Result<Vec<(String, i64, String, i64)>, AppError> {
+    let rows = sqlx::query_as::<_, (String, i64, String, i64)>(
+        "SELECT ih.blake3_hash, ih.dhash, f.representative_name, f.file_size
+         FROM image_hashes ih
+         JOIN files f ON f.blake3_hash = ih.blake3_hash
+         WHERE ih.dhash IS NOT NULL
+           AND EXISTS (SELECT 1 FROM file_locations fl WHERE fl.blake3_hash = ih.blake3_hash)",
+    )
+    .fetch_all(pool)
+    .await?;
+    Ok(rows)
 }

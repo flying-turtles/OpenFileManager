@@ -8,9 +8,10 @@ import { Import } from "./pages/Import";
 import { Projects } from "./pages/Projects";
 import { Transfer } from "./pages/Transfer";
 import { Backup } from "./pages/Backup";
+import { Similar } from "./pages/Similar";
 import "./App.css";
 
-type Page = "dashboard" | "devices" | "scanner" | "files" | "import" | "transfer" | "projects" | "backup";
+type Page = "dashboard" | "devices" | "scanner" | "files" | "import" | "transfer" | "projects" | "backup" | "similar";
 
 function App() {
   const [page, setPage] = useState<Page>("dashboard");
@@ -62,6 +63,9 @@ function App() {
         <button className={page === "projects" ? "active" : ""} onClick={() => setPage("projects")}>
           Projects
         </button>
+        <button className={page === "similar" ? "active" : ""} onClick={() => setPage("similar")}>
+          Similar
+        </button>
         <button className={page === "backup" ? "active" : ""} onClick={() => setPage("backup")}>
           Backup
         </button>
@@ -89,6 +93,9 @@ function App() {
         {page === "projects" && <Projects onTransferProject={handleTransferProject} />}
         <div className={page === "backup" ? "contents-display" : "hidden-display"}>
           <Backup />
+        </div>
+        <div className={page === "similar" ? "contents-display" : "hidden-display"}>
+          <Similar />
         </div>
       </main>
     </div>
