@@ -361,11 +361,11 @@ export function Import() {
             <h3>Backup Status</h3>
             <div className="stats-grid">
               <div className="stat-card">
-                <div className="stat-value" style={{ color: "var(--success)" }}>{fullyBacked}</div>
+                <div className="stat-value" style={{ color: "var(--safe)" }}>{fullyBacked}</div>
                 <div className="stat-label">2+ Backups</div>
               </div>
               <div className="stat-card">
-                <div className="stat-value" style={{ color: "var(--warning)" }}>{singleCopy}</div>
+                <div className="stat-value" style={{ color: "var(--warn)" }}>{singleCopy}</div>
                 <div className="stat-label">1 Backup</div>
               </div>
               {noCopy > 0 && (

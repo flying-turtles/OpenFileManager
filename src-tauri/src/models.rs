@@ -302,3 +302,27 @@ pub enum ImportEvent {
     Cancelled,
     Paused { processed: u64, total: u64 },
 }
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BackupSettings {
+    pub host: String,
+    pub port: i64,
+    pub database: String,
+    pub username: String,
+    pub has_password: bool,
+    pub last_backup_at: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum BackupEvent {
+    #[serde(rename_all = "camelCase")]
+    Started { total_tables: u64 },
+    #[serde(rename_all = "camelCase")]
+    TableProgress { table: String, rows_copied: u64, total_rows: u64 },
+    #[serde(rename_all = "camelCase")]
+    TableDone { table: String, rows: u64 },
+    #[serde(rename_all = "camelCase")]
+    Finished { total_rows: u64, finished_at: String },
+    Error { message: String },
+}

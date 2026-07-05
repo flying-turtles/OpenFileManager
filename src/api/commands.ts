@@ -18,6 +18,8 @@ import type {
   UnsafeFilePageResult,
   BulkDeleteResult,
   BulkDeleteEvent,
+  BackupSettings,
+  BackupEvent,
 } from "../types";
 
 export async function detectDevices(): Promise<StorageDevice[]> {
@@ -285,4 +287,30 @@ export async function startProjectTransfer(
 
 export async function cancelProjectTransfer(): Promise<void> {
   return invoke("cancel_project_transfer");
+}
+
+export async function getBackupSettings(): Promise<BackupSettings | null> {
+  return invoke("get_backup_settings");
+}
+
+export async function saveBackupSettings(
+  host: string,
+  port: number,
+  database: string,
+  username: string,
+  password: string
+): Promise<BackupSettings> {
+  return invoke("save_backup_settings", { host, port, database, username, password });
+}
+
+export async function testBackupConnection(): Promise<void> {
+  return invoke("test_backup_connection");
+}
+
+export async function runDatabaseBackup(
+  onEvent: (event: BackupEvent) => void
+): Promise<void> {
+  const channel = new Channel<BackupEvent>();
+  channel.onmessage = onEvent;
+  return invoke("run_database_backup", { onEvent: channel });
 }

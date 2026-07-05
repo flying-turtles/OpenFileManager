@@ -1,3 +1,4 @@
+mod backup;
 mod devices;
 mod files;
 mod import;
@@ -36,6 +37,7 @@ fn mark_connected(mut devices: Vec<StorageDevice>, connected_ids: &HashSet<Strin
     devices
 }
 
+pub use backup::*;
 pub use devices::*;
 pub use files::*;
 pub use import::*;

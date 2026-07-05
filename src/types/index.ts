@@ -208,3 +208,19 @@ export type ImportEvent =
   | { Error: { message: string } }
   | "Cancelled"
   | { Paused: { processed: number; total: number } };
+
+export interface BackupSettings {
+  host: string;
+  port: number;
+  database: string;
+  username: string;
+  hasPassword: boolean;
+  lastBackupAt: string | null;
+}
+
+export type BackupEvent =
+  | { Started: { totalTables: number } }
+  | { TableProgress: { table: string; rowsCopied: number; totalRows: number } }
+  | { TableDone: { table: string; rows: number } }
+  | { Finished: { totalRows: number; finishedAt: string } }
+  | { Error: { message: string } };

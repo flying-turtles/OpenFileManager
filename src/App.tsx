@@ -7,9 +7,10 @@ import { FileBrowser } from "./pages/FileBrowser";
 import { Import } from "./pages/Import";
 import { Projects } from "./pages/Projects";
 import { Transfer } from "./pages/Transfer";
+import { Backup } from "./pages/Backup";
 import "./App.css";
 
-type Page = "dashboard" | "devices" | "scanner" | "files" | "import" | "transfer" | "projects";
+type Page = "dashboard" | "devices" | "scanner" | "files" | "import" | "transfer" | "projects" | "backup";
 
 function App() {
   const [page, setPage] = useState<Page>("dashboard");
@@ -61,6 +62,9 @@ function App() {
         <button className={page === "projects" ? "active" : ""} onClick={() => setPage("projects")}>
           Projects
         </button>
+        <button className={page === "backup" ? "active" : ""} onClick={() => setPage("backup")}>
+          Backup
+        </button>
         <button
           className="theme-toggle"
           onClick={() => setTheme(t => t === "dark" ? "light" : t === "light" ? "system" : "dark")}
@@ -83,6 +87,9 @@ function App() {
           <Transfer project={transferProject} />
         </div>
         {page === "projects" && <Projects onTransferProject={handleTransferProject} />}
+        <div className={page === "backup" ? "contents-display" : "hidden-display"}>
+          <Backup />
+        </div>
       </main>
     </div>
   );

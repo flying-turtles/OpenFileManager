@@ -43,6 +43,8 @@ pub async fn run_migrations(pool: &DbPool) -> Result<(), AppError> {
     let _ = sqlx::raw_sql(sql6).execute(pool).await;
     let sql7 = include_str!("../migrations/007_dir_cache.sql");
     sqlx::raw_sql(sql7).execute(pool).await?;
+    let sql8 = include_str!("../migrations/008_backup_settings.sql");
+    sqlx::raw_sql(sql8).execute(pool).await?;
     // Purge any existing dotfiles from the database
     let _ = purge_dotfiles(pool).await;
     Ok(())
@@ -1170,4 +1172,46 @@ pub async fn get_dashboard_stats(pool: &DbPool) -> Result<DashboardStats, AppErr
         total_devices: total_devices.0,
         total_size_bytes: total_size.0,
     })
+}
+
+// --- Backup settings ---
+
+pub async fn get_backup_settings(
+    pool: &DbPool,
+) -> Result<Option<(String, i64, String, String, Option<String>)>, AppError> {
+    let row = sqlx::query_as::<_, (String, i64, String, String, Option<String>)>(
+        "SELECT host, port, db_name, username, last_backup_at FROM backup_settings WHERE id = 1",
+    )
+    .fetch_optional(pool)
+    .await?;
+    Ok(row)
+}
+
+pub async fn save_backup_settings(
+    pool: &DbPool,
+    host: &str,
+    port: i64,
+    db_name: &str,
+    username: &str,
+) -> Result<(), AppError> {
+    sqlx::query(
+        "INSERT INTO backup_settings (id, host, port, db_name, username) VALUES (1, ?, ?, ?, ?)
+         ON CONFLICT(id) DO UPDATE SET host = excluded.host, port = excluded.port,
+         db_name = excluded.db_name, username = excluded.username",
+    )
+    .bind(host)
+    .bind(port)
+    .bind(db_name)
+    .bind(username)
+    .execute(pool)
+    .await?;
+    Ok(())
+}
+
+pub async fn set_last_backup_at(pool: &DbPool, when: &str) -> Result<(), AppError> {
+    sqlx::query("UPDATE backup_settings SET last_backup_at = ? WHERE id = 1")
+        .bind(when)
+        .execute(pool)
+        .await?;
+    Ok(())
 }

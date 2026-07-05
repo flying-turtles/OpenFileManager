@@ -1,3 +1,4 @@
+mod backup;
 mod commands;
 mod db;
 mod devices;
@@ -102,6 +103,10 @@ pub fn run() {
             commands::check_project_transfer,
             commands::start_project_transfer,
             commands::cancel_project_transfer,
+            commands::get_backup_settings,
+            commands::save_backup_settings,
+            commands::test_backup_connection,
+            commands::run_database_backup,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

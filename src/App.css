@@ -445,6 +445,16 @@ select:focus-visible {
   margin-bottom: 12px;
 }
 
+/* Success message (shared: Backup) */
+.success-msg {
+  background: rgba(46, 204, 113, 0.1);
+  border: 1px solid var(--safe);
+  border-radius: var(--radius);
+  padding: 12px 16px;
+  color: var(--safe);
+  margin-bottom: 12px;
+}
+
 /* File table status (shared: FileTable, FileBrowser, Projects) */
 .file-table-status {
   font-size: 12px;
