@@ -242,3 +242,11 @@ export type SimilarScanEvent =
   | { Finished: { hashed: number; failed: number } }
   | { Error: { message: string } }
   | "Cancelled";
+
+export type VerifyEvent =
+  | { Started: { total: number } }
+  | { Progress: { processed: number; total: number; currentFile: string } }
+  | { Corrupted: { locationId: number; filePath: string; fileName: string } }
+  | { Finished: { verified: number; baselined: number; modified: number; corrupted: number; missing: number } }
+  | { Error: { message: string } }
+  | "Cancelled";

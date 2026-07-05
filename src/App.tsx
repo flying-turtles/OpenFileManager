@@ -1,4 +1,6 @@
 import { useState, useEffect, useCallback } from "react";
+import { listen } from "@tauri-apps/api/event";
+import { getDevices } from "./api/commands";
 import type { StorageDevice } from "./types";
 import { Dashboard, type FilesFilter } from "./pages/Dashboard";
 import { Devices } from "./pages/Devices";
@@ -18,6 +20,30 @@ function App() {
   const [scanDevice, setScanDevice] = useState<StorageDevice | undefined>();
   const [transferProject, setTransferProject] = useState<{ id: number; title: string } | null>(null);
   const [filesFilter, setFilesFilter] = useState<FilesFilter>("all");
+  const [connectPrompts, setConnectPrompts] = useState<StorageDevice[]>([]);
+
+  // Offer a scan when a drive that is already in the index reconnects
+  useEffect(() => {
+    const unlisten = listen<{ connected: string[] }>("devices-changed", async (event) => {
+      const ids = event.payload?.connected ?? [];
+      if (ids.length === 0) return;
+      try {
+        const known = await getDevices();
+        const reconnected = known.filter((d) => ids.includes(d.id));
+        if (reconnected.length > 0) {
+          setConnectPrompts((prev) => {
+            const have = new Set(prev.map((d) => d.id));
+            return [...prev, ...reconnected.filter((d) => !have.has(d.id))];
+          });
+        }
+      } catch (e) {
+        console.error("Failed to resolve connected devices:", e);
+      }
+    });
+    return () => {
+      unlisten.then((fn) => fn());
+    };
+  }, []);
   const [theme, setTheme] = useState(() => localStorage.getItem("theme") || "system");
 
   useEffect(() => {
@@ -84,10 +110,33 @@ function App() {
         </button>
       </nav>
       <main className="content">
+        {connectPrompts.map((d) => (
+          <div key={d.id} className="connect-banner">
+            <span>
+              <strong>{d.label}</strong> connected ({d.mountPoint})
+            </span>
+            <div className="flex-row gap-8">
+              <button
+                className="btn-primary"
+                onClick={() => {
+                  setConnectPrompts((prev) => prev.filter((p) => p.id !== d.id));
+                  handleScanDevice({ ...d, isConnected: true });
+                }}
+              >
+                Scan Now
+              </button>
+              <button onClick={() => setConnectPrompts((prev) => prev.filter((p) => p.id !== d.id))}>
+                Dismiss
+              </button>
+            </div>
+          </div>
+        ))}
         {page === "dashboard" && (
           <Dashboard onOpenFiles={handleOpenFiles} onOpenDevices={() => setPage("devices")} />
         )}
-        {page === "devices" && <Devices onScanDevice={handleScanDevice} />}
+        <div className={page === "devices" ? "contents-display" : "hidden-display"}>
+          <Devices onScanDevice={handleScanDevice} />
+        </div>
         <div className={page === "scanner" ? "contents-display" : "hidden-display"}>
           <Scanner initialDevice={scanDevice} />
         </div>

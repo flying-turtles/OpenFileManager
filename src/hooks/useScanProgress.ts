@@ -1,6 +1,7 @@
 import { useState, useCallback, useRef } from "react";
 import type { ScanEvent } from "../types";
 import { startScan, cancelScan, pauseScan } from "../api/commands";
+import { notifyDone } from "../utils/notify";
 
 export interface ScanState {
   scanning: boolean;
@@ -76,6 +77,10 @@ export function useScanProgress() {
           lastFile: event.FileHashed.path,
         }));
       } else if (typeof event === "object" && "Finished" in event) {
+        notifyDone(
+          "Scan complete",
+          `${event.Finished.scanned} scanned, ${event.Finished.added} added, ${event.Finished.removed} removed`
+        );
         setState((s) => ({
           ...s,
           scanning: false,

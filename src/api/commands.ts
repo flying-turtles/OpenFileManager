@@ -22,6 +22,7 @@ import type {
   BackupEvent,
   SimilarGroup,
   SimilarScanEvent,
+  VerifyEvent,
 } from "../types";
 
 export async function detectDevices(): Promise<StorageDevice[]> {
@@ -350,4 +351,17 @@ export async function searchFiles(
   limit?: number
 ): Promise<FileLocation[]> {
   return invoke("search_files", { query, limit });
+}
+
+export async function verifyDevice(
+  deviceId: string,
+  onEvent: (event: VerifyEvent) => void
+): Promise<void> {
+  const channel = new Channel<VerifyEvent>();
+  channel.onmessage = onEvent;
+  return invoke("verify_device", { deviceId, onEvent: channel });
+}
+
+export async function cancelVerify(): Promise<void> {
+  return invoke("cancel_verify");
 }

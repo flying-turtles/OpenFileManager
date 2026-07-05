@@ -6,6 +6,7 @@ import {
   cancelImport,
   ejectDevice,
 } from "../api/commands";
+import { notifyDone } from "../utils/notify";
 
 export type ImportPhase =
   | "idle"
@@ -28,7 +29,10 @@ export function useImport() {
 
   const handleEvent = useCallback((event: ImportEvent) => {
     if (typeof event === "string") {
-      if (event === "CopyComplete") setPhase("complete");
+      if (event === "CopyComplete") {
+        notifyDone("Import complete", "All files copied to the selected drives");
+        setPhase("complete");
+      }
       if (event === "Cancelled") setPhase("reviewed");
       return;
     }

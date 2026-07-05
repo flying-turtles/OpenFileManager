@@ -6,6 +6,7 @@ import {
   getSimilarGroups,
   bulkDeleteFileCopies,
 } from "../api/commands";
+import { notifyDone } from "../utils/notify";
 
 export type SimilarPhase = "idle" | "scanning" | "loading" | "ready";
 
@@ -46,6 +47,11 @@ export function useSimilar() {
               processed: event.Progress.processed,
               total: event.Progress.total,
             });
+          } else if ("Finished" in event) {
+            notifyDone(
+              "Similarity scan complete",
+              `${event.Finished.hashed} items analyzed`
+            );
           } else if ("Error" in event) {
             setError(event.Error.message);
           }

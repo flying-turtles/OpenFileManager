@@ -5,6 +5,7 @@ import {
   startProjectTransfer,
   cancelProjectTransfer,
 } from "../api/commands";
+import { notifyDone } from "../utils/notify";
 
 export type TransferPhase =
   | "idle"
@@ -25,6 +26,7 @@ export function useTransfer() {
 
   const handleEvent = useCallback((event: TransferEvent) => {
     if (event === "CopyComplete") {
+      notifyDone("Transfer complete", "All project files copied to the target drive");
       setPhase("complete");
     } else if (event === "Cancelled") {
       setPhase("select-device");

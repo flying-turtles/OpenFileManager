@@ -7,10 +7,12 @@ interface Props {
   onSetType: (deviceId: string, type_: string) => void;
   onSetSpeed: (deviceId: string, speed: string) => void;
   onScan: (device: StorageDevice) => void;
+  onVerify?: (device: StorageDevice) => void;
+  verifyDisabled?: boolean;
   onRemove: (deviceId: string) => void;
 }
 
-export function DeviceCard({ device, onSetType, onSetSpeed, onScan, onRemove }: Props) {
+export function DeviceCard({ device, onSetType, onSetSpeed, onScan, onVerify, verifyDisabled, onRemove }: Props) {
   const hasTotal = device.totalBytes > 0;
   const usedBytes = hasTotal ? device.totalBytes - device.availableBytes : 0;
   const usedPct = hasTotal ? (usedBytes / device.totalBytes) * 100 : 0;
@@ -74,6 +76,15 @@ export function DeviceCard({ device, onSetType, onSetSpeed, onScan, onRemove }: 
         <button onClick={() => onScan(device)} disabled={!device.isConnected}>
           Scan
         </button>
+        {onVerify && (
+          <button
+            onClick={() => onVerify(device)}
+            disabled={!device.isConnected || verifyDisabled}
+            title="Fully re-hash all indexed files on this drive to detect corruption"
+          >
+            Verify
+          </button>
+        )}
         <button className="btn-danger" onClick={() => onRemove(device.id)}>
           Remove
         </button>

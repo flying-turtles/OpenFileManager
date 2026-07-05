@@ -215,9 +215,9 @@ export function Similar() {
 
   return (
     <div className="page">
-      <h1>Similar Pictures</h1>
+      <h1>Similar Media</h1>
       <p className="text-muted-color text-sm" style={{ marginBottom: 16 }}>
-        Finds pictures that look alike but are not exact duplicates — click pictures to toggle
+        Finds pictures and videos that look alike but are not exact duplicates (videos compare by poster frame) — click pictures to toggle
         keep/delete, then delete everything not kept.
       </p>
 
@@ -256,7 +256,7 @@ export function Similar() {
             onClick={() => scan(maxDistance, deviceFilter || undefined)}
             disabled={phase === "loading"}
           >
-            {phase === "ready" ? "Rescan" : "Find Similar Pictures"}
+            {phase === "ready" ? "Rescan" : "Find Similar Media"}
           </button>
         )}
       </div>
@@ -293,7 +293,7 @@ export function Similar() {
             <div key={group.files[0].blake3Hash} className="similar-group">
               <div className="similar-group-header">
                 <span>
-                  {group.files.length} similar pictures · {keeperSet.size} kept
+                  {group.files.length} similar items · {keeperSet.size} kept
                   {savings > 0 && ` · save ${formatBytes(savings)}`}
                 </span>
                 <button

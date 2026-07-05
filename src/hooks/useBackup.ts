@@ -7,6 +7,7 @@ import {
   runDatabaseBackup,
   runDatabaseRestore,
 } from "../api/commands";
+import { notifyDone } from "../utils/notify";
 
 export type BackupPhase = "idle" | "running" | "restoring" | "done" | "restored" | "error";
 
@@ -70,6 +71,7 @@ export function useBackup() {
           tablesDone += 1;
           setProgress((p) => (p ? { ...p, tablesDone } : p));
         } else if ("Finished" in event) {
+          notifyDone("Backup complete", `${event.Finished.totalRows.toLocaleString()} rows copied to the server`);
           setTotalRows(event.Finished.totalRows);
           setSettings((s) => (s ? { ...s, lastBackupAt: event.Finished.finishedAt } : s));
           setPhase("done");
@@ -108,6 +110,7 @@ export function useBackup() {
           tablesDone += 1;
           setProgress((p) => (p ? { ...p, tablesDone } : p));
         } else if ("Finished" in event) {
+          notifyDone("Restore complete", `${event.Finished.totalRows.toLocaleString()} rows restored from the server`);
           setTotalRows(event.Finished.totalRows);
           setPhase("restored");
         } else if ("Error" in event) {

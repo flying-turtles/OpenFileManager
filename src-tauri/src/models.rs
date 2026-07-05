@@ -351,3 +351,17 @@ pub enum SimilarScanEvent {
     Error { message: String },
     Cancelled,
 }
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum VerifyEvent {
+    #[serde(rename_all = "camelCase")]
+    Started { total: u64 },
+    #[serde(rename_all = "camelCase")]
+    Progress { processed: u64, total: u64, current_file: String },
+    #[serde(rename_all = "camelCase")]
+    Corrupted { location_id: i64, file_path: String, file_name: String },
+    #[serde(rename_all = "camelCase")]
+    Finished { verified: u64, baselined: u64, modified: u64, corrupted: u64, missing: u64 },
+    Error { message: String },
+    Cancelled,
+}

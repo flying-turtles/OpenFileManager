@@ -505,6 +505,20 @@ select:focus-visible {
   margin-bottom: 12px;
 }
 
+/* Drive-connected banner (App) */
+.connect-banner {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  background: rgba(74, 158, 255, 0.08);
+  border: 1px solid var(--accent);
+  border-radius: var(--radius);
+  padding: 10px 16px;
+  margin-bottom: 12px;
+  font-size: 13px;
+}
+
 /* Success message (shared: Backup) */
 .success-msg {
   background: rgba(46, 204, 113, 0.1);

@@ -9,9 +9,12 @@ pub const DECODABLE_EXTS: &[&str] = &[
 ];
 
 /// Formats decoded via a qlmanage-generated PNG thumbnail (macOS Quick Look).
+/// Videos hash their Quick Look poster frame, so near-identical clips
+/// (re-encodes, trims sharing the same start) group together.
 pub const QUICKLOOK_EXTS: &[&str] = &[
     "heic", "heif", "avif", "cr2", "cr3", "arw", "nef", "dng", "orf", "raf",
     "rw2", "pef", "srw", "3fr", "iiq",
+    "mp4", "mov", "avi", "mkv", "m4v", "webm", "mts",
 ];
 
 pub fn all_image_exts() -> Vec<&'static str> {

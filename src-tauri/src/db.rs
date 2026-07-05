@@ -47,6 +47,8 @@ pub async fn run_migrations(pool: &DbPool) -> Result<(), AppError> {
     sqlx::raw_sql(sql8).execute(pool).await?;
     let sql9 = include_str!("../migrations/009_image_hashes.sql");
     sqlx::raw_sql(sql9).execute(pool).await?;
+    let sql10 = include_str!("../migrations/010_full_hash.sql");
+    let _ = sqlx::raw_sql(sql10).execute(pool).await;
     // Purge any existing dotfiles from the database
     let _ = purge_dotfiles(pool).await;
     Ok(())
@@ -1309,4 +1311,44 @@ pub async fn search_files(
     .fetch_all(pool)
     .await?;
     Ok(rows)
+}
+
+// --- Full-hash verification ---
+
+/// (location_id, file_path, file_name, file_size, modified_at, full_hash)
+pub async fn get_locations_for_verify(
+    pool: &DbPool,
+    device_id: &str,
+) -> Result<Vec<(i64, String, String, i64, Option<String>, Option<String>)>, AppError> {
+    let rows = sqlx::query_as::<_, (i64, String, String, i64, Option<String>, Option<String>)>(
+        "SELECT id, file_path, file_name, file_size, modified_at, full_hash
+         FROM file_locations WHERE device_id = ? ORDER BY file_path",
+    )
+    .bind(device_id)
+    .fetch_all(pool)
+    .await?;
+    Ok(rows)
+}
+
+pub async fn set_full_hash(
+    pool: &DbPool,
+    location_id: i64,
+    full_hash: &str,
+) -> Result<(), AppError> {
+    sqlx::query(
+        "UPDATE file_locations SET full_hash = ?, full_hash_verified_at = datetime('now') WHERE id = ?",
+    )
+    .bind(full_hash)
+    .bind(location_id)
+    .execute(pool)
+    .await?;
+    Ok(())
+}
+
+pub async fn touch_full_hash_verified(pool: &DbPool, location_id: i64) -> Result<(), AppError> {
+    sqlx::query("UPDATE file_locations SET full_hash_verified_at = datetime('now') WHERE id = ?")
+        .bind(location_id)
+        .execute(pool)
+        .await?;
+    Ok(())
 }

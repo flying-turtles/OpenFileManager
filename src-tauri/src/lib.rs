@@ -24,6 +24,7 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_notification::init())
         .setup(|app| {
             let app_data = app
                 .path()
@@ -49,12 +50,42 @@ pub fn run() {
                 transfer_cancel_token: Arc::new(Mutex::new(None)),
                 transfer_resolved: Arc::new(Mutex::new(None)),
                 similar_cancel_token: Arc::new(Mutex::new(None)),
+                verify_cancel_token: Arc::new(Mutex::new(None)),
             });
 
             let handle = app.handle().clone();
             tauri::async_runtime::spawn(async move {
                 if let Err(e) = auto_mount_network_drives(&pool_clone, &handle).await {
                     log::error!("Auto-mount error: {}", e);
+                }
+            });
+
+            // Watch for volume mount/unmount and notify the frontend
+            let watch_handle = app.handle().clone();
+            tauri::async_runtime::spawn(async move {
+                let mut prev: std::collections::BTreeSet<String> = devices::detect_volumes()
+                    .into_iter()
+                    .map(|d| d.id)
+                    .collect();
+                loop {
+                    tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+                    let current: std::collections::BTreeSet<String> =
+                        tokio::task::spawn_blocking(|| {
+                            devices::detect_volumes().into_iter().map(|d| d.id).collect()
+                        })
+                        .await
+                        .unwrap_or_default();
+                    if current.is_empty() {
+                        continue;
+                    }
+                    if current != prev {
+                        let connected: Vec<&String> = current.difference(&prev).collect();
+                        let _ = watch_handle.emit(
+                            "devices-changed",
+                            serde_json::json!({ "connected": connected }),
+                        );
+                        prev = current;
+                    }
                 }
             });
 
@@ -114,6 +145,8 @@ pub fn run() {
             commands::scan_similar_pictures,
             commands::cancel_similar_scan,
             commands::get_similar_groups,
+            commands::verify_device,
+            commands::cancel_verify,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

@@ -8,6 +8,7 @@ mod projects;
 mod scan;
 mod similar;
 mod transfer;
+mod verify;
 
 use std::sync::Arc;
 use std::collections::HashSet;
@@ -28,6 +29,7 @@ pub struct AppState {
     pub import_analysis: Arc<Mutex<Option<Arc<ImportAnalysis>>>>,
     pub transfer_cancel_token: Arc<Mutex<Option<CancellationToken>>>,
     pub similar_cancel_token: Arc<Mutex<Option<CancellationToken>>>,
+    pub verify_cancel_token: Arc<Mutex<Option<CancellationToken>>>,
     pub transfer_resolved: Arc<Mutex<Option<(Vec<ResolvedTransferFile>, String, String, String)>>>,
 }
 
@@ -49,3 +51,4 @@ pub use projects::*;
 pub use scan::*;
 pub use similar::*;
 pub use transfer::*;
+pub use verify::*;
