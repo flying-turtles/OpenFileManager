@@ -95,16 +95,32 @@ pub async fn run_scan(
     let dir_cache = db::get_dir_cache(&pool, &device_id, &scan_prefix).await?;
     let existing_locations = db::get_locations_by_prefix(&pool, &device_id, &scan_prefix).await?;
 
-    // Estimate total: use dir cache if available, otherwise quick count pass
+    // Estimate total: use dir cache if available, otherwise quick count pass.
+    // The count runs off the async executor and aborts on cancel.
     let mut total: u64 = if !dir_cache.is_empty() {
         dir_cache.values().map(|e| e.file_count as u64).sum()
     } else {
-        scan_walker(&target)
-            .filter_map(|e| e.ok())
-            .filter(|e| e.file_type().map_or(false, |ft| ft.is_file()))
-            .filter(|e| e.file_name().to_string_lossy() != FILEMANAGER_ID_FILE)
-            .count() as u64
+        let target_c = target.clone();
+        let token_c = cancel_token.clone();
+        tokio::task::spawn_blocking(move || {
+            scan_walker(&target_c)
+                .take_while(|_| !token_c.is_cancelled())
+                .filter_map(|e| e.ok())
+                .filter(|e| e.file_type().map_or(false, |ft| ft.is_file()))
+                .filter(|e| e.file_name().to_string_lossy() != FILEMANAGER_ID_FILE)
+                .count() as u64
+        })
+        .await
+        .map_err(|e| AppError::General(format!("task join error: {}", e)))?
     };
+    if cancel_token.is_cancelled() {
+        if progress.pausing.load(Ordering::Relaxed) {
+            let _ = channel.send(ScanEvent::Paused { scanned: 0, hashed: 0, added: 0, total: 0 });
+        } else {
+            let _ = channel.send(ScanEvent::Cancelled);
+        }
+        return Ok(());
+    }
     progress.total.store(total, Ordering::Relaxed);
     let _ = channel.send(ScanEvent::Started { total_files: total });
 
@@ -289,18 +305,24 @@ pub async fn run_scan(
         })
         .buffer_unordered(parallelism);
 
-    while let Some(result) = hash_stream.next().await {
-        if cancel_token.is_cancelled() {
-            if progress.pausing.load(Ordering::Relaxed) {
-                let s = progress.scanned.load(Ordering::Relaxed);
-                let h = progress.hashed.load(Ordering::Relaxed);
-                let a = progress.added.load(Ordering::Relaxed);
-                let _ = channel.send(ScanEvent::Paused { scanned: s, hashed: h, added: a, total });
-            } else {
-                let _ = channel.send(ScanEvent::Cancelled);
+    // select! so cancel/pause fires immediately even if a file read hangs
+    // (e.g. a dying disk or dropped network mount)
+    loop {
+        let next = tokio::select! {
+            _ = cancel_token.cancelled() => {
+                if progress.pausing.load(Ordering::Relaxed) {
+                    let s = progress.scanned.load(Ordering::Relaxed);
+                    let h = progress.hashed.load(Ordering::Relaxed);
+                    let a = progress.added.load(Ordering::Relaxed);
+                    let _ = channel.send(ScanEvent::Paused { scanned: s, hashed: h, added: a, total });
+                } else {
+                    let _ = channel.send(ScanEvent::Cancelled);
+                }
+                return Ok(());
             }
-            return Ok(());
-        }
+            next = hash_stream.next() => next,
+        };
+        let Some(result) = next else { break };
 
         match result {
             Ok(Ok(HashResult { item, hash })) => {
