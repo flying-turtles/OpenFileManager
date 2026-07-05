@@ -15,11 +15,11 @@ export function useSimilar() {
   const [groups, setGroups] = useState<SimilarGroup[]>([]);
   const [error, setError] = useState("");
 
-  const loadGroups = useCallback(async (maxDistance: number) => {
+  const loadGroups = useCallback(async (maxDistance: number, deviceId?: string) => {
     setPhase("loading");
     setError("");
     try {
-      setGroups(await getSimilarGroups(maxDistance));
+      setGroups(await getSimilarGroups(maxDistance, deviceId));
       setPhase("ready");
     } catch (e) {
       setError(String(e));
@@ -28,7 +28,7 @@ export function useSimilar() {
   }, []);
 
   const scan = useCallback(
-    async (maxDistance: number) => {
+    async (maxDistance: number, deviceId?: string) => {
       setPhase("scanning");
       setError("");
       setProgress({ processed: 0, total: 0 });
@@ -49,12 +49,12 @@ export function useSimilar() {
           } else if ("Error" in event) {
             setError(event.Error.message);
           }
-        });
+        }, deviceId);
         if (cancelled) {
           setPhase("idle");
           return;
         }
-        await loadGroups(maxDistance);
+        await loadGroups(maxDistance, deviceId);
       } catch (e) {
         setError(String(e));
         setPhase("idle");

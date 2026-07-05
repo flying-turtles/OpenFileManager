@@ -26,12 +26,21 @@ async fn dhash_via_quicklook(app: &tauri::AppHandle, path: &Path) -> Result<u64,
     let out_dir = tmp_dir.join(&key.to_hex()[..16]);
     std::fs::create_dir_all(&out_dir)?;
 
-    let output = tokio::process::Command::new("qlmanage")
-        .args(["-t", "-s", "128", "-o"])
-        .arg(&out_dir)
-        .arg(path)
-        .output()
-        .await?;
+    // Timeout + kill_on_drop so a hung Quick Look can never stall the scan
+    let output = tokio::time::timeout(
+        std::time::Duration::from_secs(20),
+        tokio::process::Command::new("qlmanage")
+            .args(["-t", "-s", "128", "-o"])
+            .arg(&out_dir)
+            .arg(path)
+            .kill_on_drop(true)
+            .output(),
+    )
+    .await
+    .map_err(|_| {
+        let _ = std::fs::remove_dir_all(&out_dir);
+        AppError::General(format!("qlmanage timed out for {}", path.display()))
+    })??;
 
     let result = (|| -> Result<u64, AppError> {
         if !output.status.success() {
@@ -73,6 +82,7 @@ async fn compute_dhash(app: &tauri::AppHandle, path: PathBuf) -> Result<u64, App
 pub async fn scan_similar_pictures(
     app: tauri::AppHandle,
     state: State<'_, AppState>,
+    device_id: Option<String>,
     on_event: Channel<SimilarScanEvent>,
 ) -> Result<(), AppError> {
     let token = CancellationToken::new();
@@ -84,7 +94,7 @@ pub async fn scan_similar_pictures(
         *guard = Some(token.clone());
     }
 
-    let result = run_similarity_scan(&app, &state, &on_event, &token).await;
+    let result = run_similarity_scan(&app, &state, device_id, &on_event, &token).await;
 
     *state.similar_cancel_token.lock().await = None;
 
@@ -99,14 +109,16 @@ pub async fn scan_similar_pictures(
 async fn run_similarity_scan(
     app: &tauri::AppHandle,
     state: &State<'_, AppState>,
+    device_id: Option<String>,
     channel: &Channel<SimilarScanEvent>,
     token: &CancellationToken,
 ) -> Result<(), AppError> {
-    // Connected devices = mount point currently exists
+    // Connected devices = mount point currently exists; optionally one device only
     let devices = db::get_all_devices(&state.pool).await?;
     let mounts: HashMap<String, String> = devices
         .into_iter()
         .filter(|d| Path::new(&d.mount_point).exists())
+        .filter(|d| device_id.as_ref().map_or(true, |id| &d.id == id))
         .map(|d| (d.id, d.mount_point))
         .collect();
     let connected_ids: Vec<String> = mounts.keys().cloned().collect();
@@ -134,11 +146,17 @@ async fn run_similarity_scan(
     let mut hashed: u64 = 0;
     let mut failed: u64 = 0;
 
-    while let Some((hash, dhash)) = results.next().await {
-        if token.is_cancelled() {
-            let _ = channel.send(SimilarScanEvent::Cancelled);
-            return Ok(());
-        }
+    // select! so cancel fires immediately, even while decodes are in flight —
+    // dropping the stream kills pending Quick Look processes (kill_on_drop)
+    loop {
+        let item = tokio::select! {
+            _ = token.cancelled() => {
+                let _ = channel.send(SimilarScanEvent::Cancelled);
+                return Ok(());
+            }
+            item = results.next() => item,
+        };
+        let Some((hash, dhash)) = item else { break };
         match dhash {
             Some(h) => {
                 db::upsert_image_hash(&state.pool, &hash, Some(h as i64)).await?;
@@ -172,6 +190,7 @@ pub async fn cancel_similar_scan(state: State<'_, AppState>) -> Result<(), AppEr
 pub async fn get_similar_groups(
     state: State<'_, AppState>,
     max_distance: Option<u32>,
+    device_id: Option<String>,
 ) -> Result<Vec<SimilarGroup>, AppError> {
     let rows = db::get_image_hashes(&state.pool).await?;
     let hashes: Vec<u64> = rows.iter().map(|(_, d, _, _)| *d as u64).collect();
@@ -194,7 +213,14 @@ pub async fn get_similar_groups(
                 locations,
             });
         }
-        if files.len() > 1 {
+        // With a device filter, only show groups that touch that device;
+        // the whole group stays visible for context.
+        let on_device = device_id.as_ref().map_or(true, |id| {
+            files
+                .iter()
+                .any(|f| f.locations.iter().any(|l| &l.device_id == id))
+        });
+        if files.len() > 1 && on_device {
             // Biggest file first — usually the highest-quality candidate to keep
             files.sort_by(|a, b| b.file_size.cmp(&a.file_size));
             groups.push(SimilarGroup { files });

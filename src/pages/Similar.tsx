@@ -164,6 +164,7 @@ export function Similar() {
   const { phase, progress, groups, error, scan, cancel, loadGroups, deleteFiles } = useSimilar();
   const { devices } = useDevices();
   const [maxDistance, setMaxDistance] = useState(5);
+  const [deviceFilter, setDeviceFilter] = useState("");
   // keeper per group: blake3Hash of the file to keep
   const [keepers, setKeepers] = useState<Record<number, string>>({});
   const [deleteTarget, setDeleteTarget] = useState<number | null>(null);
@@ -194,7 +195,13 @@ export function Similar() {
   const handleDistanceChange = (v: number) => {
     setMaxDistance(v);
     setKeepers({});
-    if (phase === "ready") loadGroups(v);
+    if (phase === "ready") loadGroups(v, deviceFilter || undefined);
+  };
+
+  const handleDeviceChange = (id: string) => {
+    setDeviceFilter(id);
+    setKeepers({});
+    if (phase === "ready") loadGroups(maxDistance, id || undefined);
   };
 
   return (
@@ -220,12 +227,24 @@ export function Similar() {
             </button>
           ))}
         </div>
+        <select
+          value={deviceFilter}
+          onChange={(e) => handleDeviceChange(e.target.value)}
+          disabled={phase === "scanning" || phase === "loading"}
+        >
+          <option value="">All connected drives</option>
+          {devices.filter((d) => d.isConnected).map((d) => (
+            <option key={d.id} value={d.id}>
+              {d.label} ({d.mountPoint})
+            </option>
+          ))}
+        </select>
         {phase === "scanning" ? (
           <button className="btn-danger" onClick={cancel}>Cancel</button>
         ) : (
           <button
             className="btn-primary"
-            onClick={() => scan(maxDistance)}
+            onClick={() => scan(maxDistance, deviceFilter || undefined)}
             disabled={phase === "loading"}
           >
             {phase === "ready" ? "Rescan" : "Find Similar Pictures"}
