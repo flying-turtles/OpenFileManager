@@ -1,3 +1,4 @@
+use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
@@ -52,6 +53,25 @@ impl ScanProgress {
     }
 }
 
+fn format_mtime(time: SystemTime) -> Option<String> {
+    time.duration_since(SystemTime::UNIX_EPOCH)
+        .ok()
+        .and_then(|d| {
+            chrono::DateTime::from_timestamp(d.as_secs() as i64, 0)
+                .map(|dt| dt.format("%Y-%m-%d %H:%M:%S").to_string())
+        })
+}
+
+fn scan_walker(target: &PathBuf) -> ignore::Walk {
+    WalkBuilder::new(target)
+        .hidden(true)
+        .git_ignore(false)
+        .git_global(false)
+        .git_exclude(false)
+        .add_custom_ignore_filename(".openfileignore")
+        .build()
+}
+
 pub async fn run_scan(
     pool: DbPool,
     target: PathBuf,
@@ -65,39 +85,45 @@ pub async fn run_scan(
     let (device_id, mount_point) = device_for_path(&volumes, &target_str)
         .ok_or_else(|| AppError::General(format!("No device found for path: {}", target_str)))?;
 
-    // Enumerate files first
-    let files: Vec<PathBuf> = WalkBuilder::new(&target)
-        .hidden(true)
-        .git_ignore(false)
-        .git_global(false)
-        .git_exclude(false)
-        .add_custom_ignore_filename(".openfileignore")
-        .build()
-        .filter_map(|e| e.ok())
-        .filter(|e| e.file_type().map_or(false, |ft| ft.is_file()))
-        .filter(|e| e.file_name().to_string_lossy() != FILEMANAGER_ID_FILE)
-        .map(|e| e.into_path())
-        .collect();
-
-    let total = files.len() as u64;
-    progress.total.store(total, Ordering::Relaxed);
-    let _ = channel.send(ScanEvent::Started { total_files: total });
-
-    // Batch-fetch existing locations for this scan prefix
     let scan_prefix = target
         .strip_prefix(&mount_point)
         .unwrap_or(&target)
         .to_string_lossy()
         .to_string();
+
+    // === Phase 0: load caches ===
+    let dir_cache = db::get_dir_cache(&pool, &device_id, &scan_prefix).await?;
     let existing_locations = db::get_locations_by_prefix(&pool, &device_id, &scan_prefix).await?;
 
-    // === Phase 1: classify files ===
+    // Estimate total: use dir cache if available, otherwise quick count pass
+    let mut total: u64 = if !dir_cache.is_empty() {
+        dir_cache.values().map(|e| e.file_count as u64).sum()
+    } else {
+        scan_walker(&target)
+            .filter_map(|e| e.ok())
+            .filter(|e| e.file_type().map_or(false, |ft| ft.is_file()))
+            .filter(|e| e.file_name().to_string_lossy() != FILEMANAGER_ID_FILE)
+            .count() as u64
+    };
+    progress.total.store(total, Ordering::Relaxed);
+    let _ = channel.send(ScanEvent::Started { total_files: total });
+
+    // === Phase 1: walk with per-directory mtime caching ===
+    //
+    // For each directory: compare mtime against cache. If unchanged, skip
+    // per-file stat/classification for its direct children. Subdirectories
+    // are still checked individually since a dir mtime only reflects
+    // direct-children changes, not nested changes.
+    let mut unchanged_dirs: HashSet<String> = HashSet::new();
+    let mut dir_file_counts: HashMap<String, (String, i64)> = HashMap::new();
+    let mut seen_dirs: Vec<String> = Vec::new();
+
     let mut to_hash: Vec<FileWorkItem> = Vec::new();
-    let mut seen_paths: Vec<String> = Vec::with_capacity(files.len());
+    let mut seen_paths: Vec<String> = Vec::with_capacity(total as usize);
     let mut scanned: u64 = 0;
     let mut added: u64 = 0;
 
-    for file_path in &files {
+    for entry_result in scan_walker(&target) {
         if cancel_token.is_cancelled() {
             if progress.pausing.load(Ordering::Relaxed) {
                 let s = progress.scanned.load(Ordering::Relaxed);
@@ -110,13 +136,80 @@ pub async fn run_scan(
             return Ok(());
         }
 
+        let entry = match entry_result {
+            Ok(e) => e,
+            Err(e) => {
+                let _ = channel.send(ScanEvent::Error {
+                    message: format!("walk error: {}", e),
+                });
+                continue;
+            }
+        };
+
+        if entry.file_type().map_or(false, |ft| ft.is_dir()) {
+            let dir_path = entry.path();
+            let rel_dir = dir_path
+                .strip_prefix(&mount_point)
+                .unwrap_or(dir_path)
+                .to_string_lossy()
+                .to_string();
+            seen_dirs.push(rel_dir.clone());
+
+            let dir_mtime_str = entry
+                .metadata()
+                .ok()
+                .and_then(|m| m.modified().ok())
+                .and_then(format_mtime)
+                .unwrap_or_default();
+
+            if let Some(cached) = dir_cache.get(&rel_dir) {
+                if cached.dir_mtime == dir_mtime_str {
+                    unchanged_dirs.insert(rel_dir.clone());
+                    dir_file_counts.insert(rel_dir, (dir_mtime_str, cached.file_count));
+                    continue;
+                }
+            }
+            // New or changed dir — will process its files
+            dir_file_counts.insert(rel_dir, (dir_mtime_str, 0));
+            continue;
+        }
+
+        if !entry.file_type().map_or(false, |ft| ft.is_file()) {
+            continue;
+        }
+        if entry.file_name().to_string_lossy() == FILEMANAGER_ID_FILE {
+            continue;
+        }
+
+        // --- File entry ---
+        let file_path = entry.path();
+        let relative_path = file_path
+            .strip_prefix(&mount_point)
+            .unwrap_or(file_path)
+            .to_string_lossy()
+            .to_string();
+
         scanned += 1;
         progress.scanned.store(scanned, Ordering::Relaxed);
         if scanned % 50 == 0 || scanned == total {
-            let _ = channel.send(ScanEvent::Progress {
-                scanned,
-                total,
-            });
+            let _ = channel.send(ScanEvent::Progress { scanned, total });
+        }
+
+        seen_paths.push(relative_path.clone());
+
+        // Skip per-file work when the parent dir is unchanged since last scan
+        let parent_rel = file_path
+            .parent()
+            .and_then(|p| p.strip_prefix(&mount_point).ok())
+            .map(|p| p.to_string_lossy().to_string())
+            .unwrap_or_default();
+
+        if unchanged_dirs.contains(&parent_rel) {
+            continue;
+        }
+
+        if let Some((_, count)) = dir_file_counts.get_mut(&parent_rel) {
+            *count += 1;
         }
 
         let metadata = match std::fs::metadata(file_path) {
@@ -130,20 +223,8 @@ pub async fn run_scan(
         };
 
         let file_size = metadata.len() as i64;
-        let modified_at = metadata
-            .modified()
-            .ok()
-            .and_then(|t| t.duration_since(SystemTime::UNIX_EPOCH).ok())
-            .and_then(|d| {
-                chrono::DateTime::from_timestamp(d.as_secs() as i64, 0)
-                    .map(|dt| dt.format("%Y-%m-%d %H:%M:%S").to_string())
-            });
+        let modified_at = metadata.modified().ok().and_then(format_mtime);
 
-        let relative_path = file_path
-            .strip_prefix(&mount_point)
-            .unwrap_or(file_path)
-            .to_string_lossy()
-            .to_string();
         let file_name = file_path
             .file_name()
             .unwrap_or_default()
@@ -154,8 +235,6 @@ pub async fn run_scan(
             .unwrap_or_default()
             .to_string_lossy()
             .to_lowercase();
-
-        seen_paths.push(relative_path.clone());
 
         let existing = existing_locations.get(&relative_path);
         let is_new = existing.is_none();
@@ -170,7 +249,7 @@ pub async fn run_scan(
         }
 
         to_hash.push(FileWorkItem {
-            path: file_path.clone(),
+            path: file_path.to_path_buf(),
             relative_path,
             file_name,
             extension,
@@ -180,9 +259,14 @@ pub async fn run_scan(
         });
     }
 
+    // Correct total to actual count (estimate may have been slightly off)
+    total = scanned;
+    progress.total.store(total, Ordering::Relaxed);
+    let _ = channel.send(ScanEvent::Progress { scanned, total });
+
     // === Phase 2: hash files ===
     let to_hash_total = to_hash.len() as u64;
-    let skipped = total - to_hash_total;
+    let skipped = total.saturating_sub(to_hash_total);
     let _ = channel.send(ScanEvent::HashingStarted { to_hash: to_hash_total, skipped });
 
     let parallelism = std::thread::available_parallelism()
@@ -258,7 +342,7 @@ pub async fn run_scan(
         }
     }
 
-    // === Phase 3: cleanup stale locations ===
+    // === Phase 3: cleanup stale locations + update dir cache ===
     // Skip cleanup when scanning a single file (not a directory) — we can't
     // determine what's "stale" from a single-file scan, and the prefix-LIKE
     // could accidentally match unrelated entries.
@@ -271,6 +355,18 @@ pub async fn run_scan(
     } else {
         0
     };
+
+    // Persist dir cache updates
+    let cache_entries: Vec<(String, String, i64)> = dir_file_counts
+        .into_iter()
+        .map(|(path, (mtime, count))| (path, mtime, count))
+        .collect();
+    if !cache_entries.is_empty() {
+        db::upsert_dir_cache_batch(&pool, &device_id, &cache_entries).await?;
+    }
+    if target.is_dir() {
+        db::remove_stale_dir_cache(&pool, &device_id, &scan_prefix, &seen_dirs).await?;
+    }
 
     // Scan finished successfully — remove any pending record
     let _ = db::delete_pending_scan_by_target(&pool, "scan", &target_str).await;

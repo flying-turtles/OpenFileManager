@@ -218,6 +218,12 @@ pub struct NetworkDrive {
     pub is_mounted: bool,
 }
 
+#[derive(Debug, Clone)]
+pub struct DirCacheEntry {
+    pub dir_mtime: String,
+    pub file_count: i64,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct BulkDeleteResult {

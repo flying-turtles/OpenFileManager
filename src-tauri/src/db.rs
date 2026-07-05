@@ -41,6 +41,8 @@ pub async fn run_migrations(pool: &DbPool) -> Result<(), AppError> {
     let _ = sqlx::raw_sql(sql5).execute(pool).await;
     let sql6 = include_str!("../migrations/006_drive_speed.sql");
     let _ = sqlx::raw_sql(sql6).execute(pool).await;
+    let sql7 = include_str!("../migrations/007_dir_cache.sql");
+    sqlx::raw_sql(sql7).execute(pool).await?;
     // Purge any existing dotfiles from the database
     let _ = purge_dotfiles(pool).await;
     Ok(())
@@ -1043,6 +1045,93 @@ pub async fn purge_dotfiles(pool: &DbPool) -> Result<u64, AppError> {
     Ok(removed)
 }
 
+// --- Dir cache queries ---
+
+pub async fn get_dir_cache(
+    pool: &DbPool,
+    device_id: &str,
+    prefix: &str,
+) -> Result<HashMap<String, DirCacheEntry>, AppError> {
+    let prefix_pattern = format!(
+        "{}%",
+        prefix.replace('%', "\\%").replace('_', "\\_")
+    );
+    let rows = sqlx::query_as::<_, (String, String, i64)>(
+        "SELECT dir_path, dir_mtime, file_count FROM dir_cache WHERE device_id = ? AND dir_path LIKE ? ESCAPE '\\'"
+    )
+    .bind(device_id)
+    .bind(&prefix_pattern)
+    .fetch_all(pool)
+    .await?;
+    let mut map = HashMap::with_capacity(rows.len());
+    for (path, mtime, count) in rows {
+        map.insert(path, DirCacheEntry { dir_mtime: mtime, file_count: count });
+    }
+    Ok(map)
+}
+
+pub async fn upsert_dir_cache_batch(
+    pool: &DbPool,
+    device_id: &str,
+    entries: &[(String, String, i64)], // (dir_path, dir_mtime, file_count)
+) -> Result<(), AppError> {
+    for chunk in entries.chunks(500) {
+        let mut sql = String::from(
+            "INSERT INTO dir_cache (device_id, dir_path, dir_mtime, file_count) VALUES "
+        );
+        let mut first = true;
+        for _ in chunk {
+            if !first { sql.push(','); }
+            sql.push_str("(?,?,?,?)");
+            first = false;
+        }
+        sql.push_str(" ON CONFLICT(device_id, dir_path) DO UPDATE SET dir_mtime = excluded.dir_mtime, file_count = excluded.file_count");
+        let mut query = sqlx::query(&sql);
+        for (path, mtime, count) in chunk {
+            query = query.bind(device_id).bind(path).bind(mtime).bind(count);
+        }
+        query.execute(pool).await?;
+    }
+    Ok(())
+}
+
+pub async fn remove_stale_dir_cache(
+    pool: &DbPool,
+    device_id: &str,
+    prefix: &str,
+    seen_dirs: &[String],
+) -> Result<(), AppError> {
+    let prefix_pattern = format!(
+        "{}%",
+        prefix.replace('%', "\\%").replace('_', "\\_")
+    );
+    let existing = sqlx::query_as::<_, (String,)>(
+        "SELECT dir_path FROM dir_cache WHERE device_id = ? AND dir_path LIKE ? ESCAPE '\\'"
+    )
+    .bind(device_id)
+    .bind(&prefix_pattern)
+    .fetch_all(pool)
+    .await?;
+
+    let seen_set: std::collections::HashSet<&str> = seen_dirs.iter().map(|s| s.as_str()).collect();
+    let stale: Vec<&str> = existing
+        .iter()
+        .filter(|(p,)| !seen_set.contains(p.as_str()))
+        .map(|(p,)| p.as_str())
+        .collect();
+
+    for chunk in stale.chunks(500) {
+        let placeholders: String = chunk.iter().map(|_| "?").collect::<Vec<_>>().join(",");
+        let sql = format!("DELETE FROM dir_cache WHERE device_id = ? AND dir_path IN ({})", placeholders);
+        let mut query = sqlx::query(&sql);
+        query = query.bind(device_id);
+        for path in chunk {
+            query = query.bind(path);
+        }
+        query.execute(pool).await?;
+    }
+    Ok(())
+}
 
 pub async fn get_dashboard_stats(pool: &DbPool) -> Result<DashboardStats, AppError> {
     let total_files: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM files")
