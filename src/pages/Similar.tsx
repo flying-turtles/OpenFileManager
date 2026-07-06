@@ -6,6 +6,7 @@ import { useDevices } from "../hooks/useDevices";
 import { useFocusTrap } from "../hooks/useFocusTrap";
 import { resolveFilePath, getThumbnail } from "../api/commands";
 import type { SimilarFile, SimilarGroup, BulkDeleteEvent, BulkDeleteResult } from "../types";
+import { PermanentToggle } from "../components/FileTable";
 import { formatBytes } from "../utils/format";
 import "./Similar.css";
 
@@ -45,7 +46,7 @@ function SimilarThumb({ file, connectedDeviceIds }: {
 function DeleteSimilarModal({ files, nothingKept, onConfirm, onClose }: {
   files: { file: SimilarFile; locationIds: number[]; skippedOffline: number }[];
   nothingKept: boolean;
-  onConfirm: (locationIds: number[], onEvent: (e: BulkDeleteEvent) => void) => Promise<BulkDeleteResult>;
+  onConfirm: (locationIds: number[], onEvent: (e: BulkDeleteEvent) => void, permanent?: boolean) => Promise<BulkDeleteResult>;
   onClose: () => void;
 }) {
   const trapRef = useFocusTrap<HTMLDivElement>();
@@ -53,6 +54,7 @@ function DeleteSimilarModal({ files, nothingKept, onConfirm, onClose }: {
   const [result, setResult] = useState<BulkDeleteResult | null>(null);
   const [processed, setProcessed] = useState(0);
   const [confirmText, setConfirmText] = useState("");
+  const [permanent, setPermanent] = useState(false);
 
   const allIds = files.flatMap((f) => f.locationIds);
   const totalBytes = files.reduce((s, f) => s + f.file.fileSize * f.locationIds.length, 0);
@@ -64,7 +66,7 @@ function DeleteSimilarModal({ files, nothingKept, onConfirm, onClose }: {
     try {
       const res = await onConfirm(allIds, (event) => {
         if ("Progress" in event) setProcessed(event.Progress.processed);
-      });
+      }, permanent);
       setResult(res);
     } catch (e: any) {
       setResult({ succeeded: [], failed: [{ locationId: 0, filePath: "", error: String(e) }] });
@@ -124,7 +126,7 @@ function DeleteSimilarModal({ files, nothingKept, onConfirm, onClose }: {
             <h2>{nothingKept ? "Delete ALL copies?" : "Delete similar pictures?"}</h2>
             <p className="bulk-delete-warning">
               {allIds.length} file cop{allIds.length !== 1 ? "ies" : "y"} (
-              {formatBytes(totalBytes)}) will be moved to the Trash.
+              {formatBytes(totalBytes)}) will be {permanent ? "permanently deleted" : "moved to the Trash"}.
             </p>
             {nothingKept && (
               <p className="bulk-delete-warning">
@@ -150,6 +152,7 @@ function DeleteSimilarModal({ files, nothingKept, onConfirm, onClose }: {
                   ))
               )}
             </div>
+            <PermanentToggle permanent={permanent} onChange={setPermanent} disabled={deleting} />
             {nothingKept && (
               <div className="form-group" style={{ marginTop: 16 }}>
                 <label>Type "<strong>delete</strong>" to confirm</label>

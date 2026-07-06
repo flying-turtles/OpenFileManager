@@ -119,8 +119,8 @@ export function Projects({ onTransferProject }: ProjectsProps) {
     setView("list");
   };
 
-  const handleDeleteFileCopy = async (locationId: number) => {
-    await deleteFileCopy(locationId);
+  const handleDeleteFileCopy = async (locationId: number, _filePath?: string, permanent?: boolean) => {
+    await deleteFileCopy(locationId, permanent);
     setProjectFiles((prev) =>
       prev
         .map((sf) => ({
@@ -132,8 +132,8 @@ export function Projects({ onTransferProject }: ProjectsProps) {
     );
   };
 
-  const handleBulkDelete = async (locationIds: number[], onEvent: (event: BulkDeleteEvent) => void): Promise<BulkDeleteResult> => {
-    const result = await bulkDeleteFileCopies(locationIds, onEvent);
+  const handleBulkDelete = async (locationIds: number[], onEvent: (event: BulkDeleteEvent) => void, permanent?: boolean): Promise<BulkDeleteResult> => {
+    const result = await bulkDeleteFileCopies(locationIds, onEvent, permanent);
     const succeededSet = new Set(result.succeeded);
     setProjectFiles((prev) =>
       prev
@@ -417,7 +417,7 @@ export function Projects({ onTransferProject }: ProjectsProps) {
             deviceNames={deviceNames}
             connectedDeviceIds={connectedDeviceIds}
             onGetSafety={(hash) => getFileSafety(hash)}
-            onDeleteLocation={safetyFilter === "duplicates" ? handleDeleteFileCopy : undefined}
+            onDeleteLocation={handleDeleteFileCopy}
             onBulkDelete={handleBulkDelete}
           />
         )}

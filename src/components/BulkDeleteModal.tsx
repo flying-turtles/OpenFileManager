@@ -1,11 +1,12 @@
 import { useState, useMemo } from "react";
 import { useFocusTrap } from "../hooks/useFocusTrap";
+import { PermanentToggle } from "./FileTable";
 import type { FileLocation, BulkDeleteResult, BulkDeleteEvent } from "../types";
 
 interface Props {
   deviceName: string;
   files: FileLocation[];
-  onConfirm: (locationIds: number[], onEvent: (event: BulkDeleteEvent) => void) => Promise<BulkDeleteResult>;
+  onConfirm: (locationIds: number[], onEvent: (event: BulkDeleteEvent) => void, permanent?: boolean) => Promise<BulkDeleteResult>;
   onClose: () => void;
 }
 
@@ -20,6 +21,7 @@ export function BulkDeleteModal({ deviceName, files, onConfirm, onClose }: Props
   const [processed, setProcessed] = useState(0);
   const [currentFile, setCurrentFile] = useState("");
   const [mode, setMode] = useState<Mode>("automatic");
+  const [permanent, setPermanent] = useState(false);
   const [keepStrategy, setKeepStrategy] = useState<KeepStrategy>("shortest");
   // For manual mode: set of location IDs marked for deletion
   const [markedForDeletion, setMarkedForDeletion] = useState<Set<number>>(new Set());
@@ -127,7 +129,7 @@ export function BulkDeleteModal({ deviceName, files, onConfirm, onClose }: Props
           setProcessed(event.Progress.processed);
           setCurrentFile(event.Progress.currentFile);
         }
-      });
+      }, permanent);
       setResult(res);
     } catch (e: any) {
       setResult({ succeeded: [], failed: [{ locationId: 0, filePath: "", error: e.toString() }] });
@@ -277,6 +279,7 @@ export function BulkDeleteModal({ deviceName, files, onConfirm, onClose }: Props
                 </div>
               </>
             )}
+            <PermanentToggle permanent={permanent} onChange={setPermanent} disabled={deleting} />
             <div className="form-group" style={{ marginTop: 16 }}>
               <label>Type "<strong>{deviceName}</strong>" to confirm</label>
               <input

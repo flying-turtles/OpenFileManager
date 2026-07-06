@@ -856,3 +856,14 @@ select:focus-visible {
   background: var(--border);
   margin: 8px 0;
 }
+
+/* Permanent-delete toggle (shared: delete confirmation dialogs) */
+.permanent-toggle {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 12px;
+  font-size: 13px;
+  color: var(--danger);
+  cursor: pointer;
+}

@@ -330,7 +330,7 @@ export function FileBrowser({ initialFilter }: Props) {
           connectedDeviceIds={connectedDeviceIds}
           selectedDeviceId={filter === "all" ? selectedDevice : undefined}
           onGetSafety={loadFileSafety}
-          onDeleteLocation={filter === "duplicates" ? deleteFileCopy : undefined}
+          onDeleteLocation={(id, _path, permanent) => deleteFileCopy(id, permanent)}
           onBulkDelete={bulkDeleteCopies}
         />
       )}

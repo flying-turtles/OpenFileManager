@@ -116,17 +116,18 @@ export async function getDuplicateFilesPage(
   return invoke("get_duplicate_files_page", { offset, limit, deviceId, sameDriveOnly });
 }
 
-export async function deleteFileCopy(locationId: number): Promise<void> {
-  return invoke("delete_file_copy", { locationId });
+export async function deleteFileCopy(locationId: number, permanent?: boolean): Promise<void> {
+  return invoke("delete_file_copy", { locationId, permanent });
 }
 
 export async function bulkDeleteFileCopies(
   locationIds: number[],
-  onEvent: (event: BulkDeleteEvent) => void
+  onEvent: (event: BulkDeleteEvent) => void,
+  permanent?: boolean
 ): Promise<BulkDeleteResult> {
   const channel = new Channel<BulkDeleteEvent>();
   channel.onmessage = onEvent;
-  return invoke("bulk_delete_file_copies", { locationIds, onEvent: channel });
+  return invoke("bulk_delete_file_copies", { locationIds, permanent, onEvent: channel });
 }
 
 export async function getFileSafety(

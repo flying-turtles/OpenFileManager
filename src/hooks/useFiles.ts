@@ -132,25 +132,29 @@ export function useFiles() {
     }
   }, []);
 
-  const deleteFileCopy = useCallback(async (locationId: number) => {
-    await deleteFileCopyApi(locationId);
-    // Remove from local state
-    setDuplicateFiles((prev) =>
+  const deleteFileCopy = useCallback(async (locationId: number, permanent?: boolean) => {
+    await deleteFileCopyApi(locationId, permanent);
+    // Remove from local state (all views)
+    const prune = (prev: FileSafety[]) =>
       prev
         .map((sf) => ({
           ...sf,
           totalCopies: sf.totalCopies - (sf.locations.some((l) => l.id === locationId) ? 1 : 0),
           locations: sf.locations.filter((l) => l.id !== locationId),
         }))
-        .filter((sf) => sf.locations.length > 0)
-    );
+        .filter((sf) => sf.locations.length > 0);
+    setDuplicateFiles(prune);
+    setUnsafeFiles(prune);
+    setSafeFiles(prune);
+    setFiles((prev) => prev.filter((l) => l.id !== locationId));
   }, []);
 
   const bulkDeleteCopies = useCallback(async (
     locationIds: number[],
-    onEvent?: (event: BulkDeleteEvent) => void
+    onEvent?: (event: BulkDeleteEvent) => void,
+    permanent?: boolean
   ): Promise<BulkDeleteResult> => {
-    const result = await bulkDeleteFileCopies(locationIds, onEvent ?? (() => {}));
+    const result = await bulkDeleteFileCopies(locationIds, onEvent ?? (() => {}), permanent);
     const succeededSet = new Set(result.succeeded);
     const prune = (prev: FileSafety[]) =>
       prev

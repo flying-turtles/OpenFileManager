@@ -76,9 +76,10 @@ export function useSimilar() {
   const deleteFiles = useCallback(
     async (
       locationIds: number[],
-      onEvent: (event: BulkDeleteEvent) => void
+      onEvent: (event: BulkDeleteEvent) => void,
+      permanent?: boolean
     ): Promise<BulkDeleteResult> => {
-      const result = await bulkDeleteFileCopies(locationIds, onEvent);
+      const result = await bulkDeleteFileCopies(locationIds, onEvent, permanent);
       const succeeded = new Set(result.succeeded);
       // Drop deleted locations; drop files with none left; drop groups with < 2 files
       setGroups((prev) =>

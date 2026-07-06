@@ -64,14 +64,18 @@ pub async fn get_duplicate_files_page(
     Ok(UnsafeFilePageResult { files, total, has_more })
 }
 
-/// Move a file to the Trash (recoverable) instead of permanently deleting it.
-/// External volumes use their own .Trashes via the OS.
-async fn move_to_trash(full_path: std::path::PathBuf) -> Result<(), AppError> {
+/// Remove a file from disk. Default is the Trash (recoverable, external
+/// volumes use their own .Trashes); `permanent` bypasses the Trash entirely.
+async fn remove_from_disk(full_path: std::path::PathBuf, permanent: bool) -> Result<(), AppError> {
     tokio::task::spawn_blocking(move || {
-        trash::delete(&full_path)
-            .map_err(|e| AppError::General(format!("Could not move to Trash: {}", e)))?;
+        if permanent {
+            std::fs::remove_file(&full_path)?;
+        } else {
+            trash::delete(&full_path)
+                .map_err(|e| AppError::General(format!("Could not move to Trash: {}", e)))?;
+        }
         if full_path.exists() {
-            return Err(AppError::General("File still exists after moving to Trash".into()));
+            return Err(AppError::General("File still exists after deletion".into()));
         }
         Ok(())
     })
@@ -83,12 +87,13 @@ async fn move_to_trash(full_path: std::path::PathBuf) -> Result<(), AppError> {
 pub async fn delete_file_copy(
     state: State<'_, AppState>,
     location_id: i64,
+    permanent: Option<bool>,
 ) -> Result<(), AppError> {
     let loc = db::get_file_location_by_id(&state.pool, location_id).await?;
     let device = db::get_device(&state.pool, &loc.device_id).await?;
     let full_path = std::path::Path::new(&device.mount_point).join(&loc.file_path);
 
-    move_to_trash(full_path).await?;
+    remove_from_disk(full_path, permanent.unwrap_or(false)).await?;
 
     db::delete_file_location(&state.pool, location_id).await?;
 
@@ -167,8 +172,10 @@ pub async fn get_dashboard_stats(state: State<'_, AppState>) -> Result<Dashboard
 pub async fn bulk_delete_file_copies(
     state: State<'_, AppState>,
     location_ids: Vec<i64>,
+    permanent: Option<bool>,
     on_event: Channel<BulkDeleteEvent>,
 ) -> Result<BulkDeleteResult, AppError> {
+    let permanent = permanent.unwrap_or(false);
     let mut succeeded = Vec::new();
     let mut failed = Vec::new();
     let total = location_ids.len() as u64;
@@ -191,7 +198,7 @@ pub async fn bulk_delete_file_copies(
             let loc = db::get_file_location_by_id(&state.pool, id).await?;
             let device = db::get_device(&state.pool, &loc.device_id).await?;
             let full_path = std::path::Path::new(&device.mount_point).join(&loc.file_path);
-            move_to_trash(full_path).await?;
+            remove_from_disk(full_path, permanent).await?;
             db::delete_file_location_no_cleanup(&state.pool, id).await?;
             Ok(())
         }

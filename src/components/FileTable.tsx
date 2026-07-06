@@ -9,13 +9,32 @@ import { useFocusTrap } from "../hooks/useFocusTrap";
 import { formatBytes } from "../utils/format";
 import "./FileTable.css";
 
+export function PermanentToggle({ permanent, onChange, disabled }: {
+  permanent: boolean;
+  onChange: (v: boolean) => void;
+  disabled?: boolean;
+}) {
+  return (
+    <label className="permanent-toggle">
+      <input
+        type="checkbox"
+        checked={permanent}
+        onChange={(e) => onChange(e.target.checked)}
+        disabled={disabled}
+      />
+      Delete permanently (skip the Trash — cannot be undone)
+    </label>
+  );
+}
+
 function DeleteCopyModal({ path, deleting, onCancel, onDelete }: {
   path: string;
   deleting: boolean;
   onCancel: () => void;
-  onDelete: () => void;
+  onDelete: (permanent: boolean) => void;
 }) {
   const trapRef = useFocusTrap<HTMLDivElement>();
+  const [permanent, setPermanent] = useState(false);
   return (
     <div className="modal-overlay" onClick={() => !deleting && onCancel()} role="dialog" aria-label="Delete file copy" aria-modal="true" onKeyDown={(e) => { if (e.key === "Escape" && !deleting) onCancel(); }}>
       <div className="modal-content" ref={trapRef} onClick={(e) => e.stopPropagation()}>
@@ -23,15 +42,18 @@ function DeleteCopyModal({ path, deleting, onCancel, onDelete }: {
         <p style={{ marginBottom: 12, wordBreak: "break-all", color: "var(--text-muted)", fontSize: 13 }}>
           {path}
         </p>
-        <p style={{ marginBottom: 20, color: "var(--danger)", fontSize: 13 }}>
-          The file will be moved to the Trash. Other copies will remain.
+        <p style={{ marginBottom: 12, color: "var(--danger)", fontSize: 13 }}>
+          {permanent
+            ? "The file will be permanently deleted from disk. Other copies will remain."
+            : "The file will be moved to the Trash. Other copies will remain."}
         </p>
+        <PermanentToggle permanent={permanent} onChange={setPermanent} disabled={deleting} />
         <div className="form-actions">
           <button onClick={onCancel} disabled={deleting}>
             Cancel
           </button>
-          <button className="btn-danger" onClick={onDelete} disabled={deleting}>
-            {deleting ? "Deleting..." : "Delete"}
+          <button className="btn-danger" onClick={() => onDelete(permanent)} disabled={deleting}>
+            {deleting ? "Deleting..." : permanent ? "Delete Permanently" : "Delete"}
           </button>
         </div>
       </div>
@@ -43,18 +65,19 @@ function DeleteAllCopiesModal({ fileName, locations, deviceNames, onConfirm, onC
   fileName: string;
   locations: FileLocation[];
   deviceNames?: Record<string, string>;
-  onConfirm: (locationIds: number[], onEvent: (e: BulkDeleteEvent) => void) => Promise<BulkDeleteResult>;
+  onConfirm: (locationIds: number[], onEvent: (e: BulkDeleteEvent) => void, permanent?: boolean) => Promise<BulkDeleteResult>;
   onClose: (deletedIds: number[]) => void;
 }) {
   const trapRef = useFocusTrap<HTMLDivElement>();
   const [confirmText, setConfirmText] = useState("");
   const [deleting, setDeleting] = useState(false);
+  const [permanent, setPermanent] = useState(false);
   const [result, setResult] = useState<BulkDeleteResult | null>(null);
 
   const handleDelete = async () => {
     setDeleting(true);
     try {
-      const res = await onConfirm(locations.map((l) => l.id), () => {});
+      const res = await onConfirm(locations.map((l) => l.id), () => {}, permanent);
       setResult(res);
     } catch (e: any) {
       setResult({ succeeded: [], failed: [{ locationId: 0, filePath: "", error: String(e) }] });
@@ -94,7 +117,8 @@ function DeleteAllCopiesModal({ fileName, locations, deviceNames, onConfirm, onC
             <h2>Delete "{fileName}" everywhere?</h2>
             <p className="bulk-delete-warning">
               All {locations.length} cop{locations.length !== 1 ? "ies" : "y"} on connected drives
-              will be moved to the Trash. Copies on disconnected drives are kept.
+              will be {permanent ? "permanently deleted" : "moved to the Trash"}. Copies on
+              disconnected drives are kept.
             </p>
             <div className="bulk-delete-file-list">
               {locations.map((l) => (
@@ -106,6 +130,7 @@ function DeleteAllCopiesModal({ fileName, locations, deviceNames, onConfirm, onC
                 </div>
               ))}
             </div>
+            <PermanentToggle permanent={permanent} onChange={setPermanent} disabled={deleting} />
             <div className="form-group" style={{ marginTop: 16 }}>
               <label>Type "<strong>delete</strong>" to confirm</label>
               <input
@@ -140,8 +165,8 @@ interface Props {
   connectedDeviceIds?: Set<string>;
   selectedDeviceId?: string;
   onGetSafety?: (hash: string) => Promise<FileSafety | null>;
-  onDeleteLocation?: (locationId: number, filePath: string) => Promise<void>;
-  onBulkDelete?: (locationIds: number[], onEvent: (e: BulkDeleteEvent) => void) => Promise<BulkDeleteResult>;
+  onDeleteLocation?: (locationId: number, filePath: string, permanent?: boolean) => Promise<void>;
+  onBulkDelete?: (locationIds: number[], onEvent: (e: BulkDeleteEvent) => void, permanent?: boolean) => Promise<BulkDeleteResult>;
 }
 
 export function FileTable({ files, totalCount, deviceNames, connectedDeviceIds, selectedDeviceId, onGetSafety, onDeleteLocation, onBulkDelete }: Props) {
@@ -182,11 +207,11 @@ export function FileTable({ files, totalCount, deviceNames, connectedDeviceIds, 
     }
   };
 
-  const handleDelete = async () => {
+  const handleDelete = async (permanent: boolean) => {
     if (!confirmDelete || !onDeleteLocation) return;
     setDeleting(true);
     try {
-      await onDeleteLocation(confirmDelete.id, confirmDelete.path);
+      await onDeleteLocation(confirmDelete.id, confirmDelete.path, permanent);
       // Update local safety state to reflect removal
       if (safety) {
         const updated = {
