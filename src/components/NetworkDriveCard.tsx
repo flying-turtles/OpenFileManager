@@ -5,10 +5,11 @@ interface Props {
   drive: NetworkDrive;
   onMount: (id: string) => Promise<void>;
   onUnmount: (id: string) => Promise<void>;
+  onScan: (drive: NetworkDrive) => void;
   onRemove: (id: string) => Promise<void>;
 }
 
-export function NetworkDriveCard({ drive, onMount, onUnmount, onRemove }: Props) {
+export function NetworkDriveCard({ drive, onMount, onUnmount, onScan, onRemove }: Props) {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
 
@@ -86,6 +87,13 @@ export function NetworkDriveCard({ drive, onMount, onUnmount, onRemove }: Props)
             {loading ? "Mounting..." : "Mount"}
           </button>
         )}
+        <button
+          onClick={() => onScan(drive)}
+          disabled={!drive.isMounted || loading}
+          title={drive.isMounted ? "Scan this share" : "Mount the drive first"}
+        >
+          Scan
+        </button>
         <button className="btn-danger" onClick={handleRemove} disabled={loading}>
           Remove
         </button>

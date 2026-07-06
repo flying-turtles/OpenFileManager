@@ -185,3 +185,18 @@ pub fn is_mountpoint(mount_point: &str) -> bool {
         })
         .unwrap_or(false)
 }
+
+/// Best-effort: place the device-id marker at the mount root so scans can
+/// map paths on this share to the drive. Read-only shares just log.
+pub fn ensure_id_marker(mount_point: &str, id: &str) {
+    let marker = Path::new(mount_point).join(crate::devices::FILEMANAGER_ID_FILE);
+    let existing = std::fs::read_to_string(&marker)
+        .map(|s| s.trim().to_string())
+        .unwrap_or_default();
+    if existing == id {
+        return;
+    }
+    if let Err(e) = std::fs::write(&marker, id) {
+        log::warn!("Could not write id marker to {}: {}", mount_point, e);
+    }
+}

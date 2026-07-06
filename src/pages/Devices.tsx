@@ -127,6 +127,21 @@ export function Devices({ onScanDevice }: Props) {
                 drive={d}
                 onMount={network.mount}
                 onUnmount={network.unmount}
+                onScan={(drive) =>
+                  onScanDevice({
+                    id: drive.id,
+                    label: drive.label,
+                    mountPoint: drive.mountPoint,
+                    deviceType: drive.deviceType,
+                    totalBytes: 0,
+                    availableBytes: 0,
+                    isRemovable: false,
+                    firstSeen: "",
+                    lastSeen: "",
+                    driveSpeed: "slow",
+                    isConnected: true,
+                  })
+                }
                 onRemove={network.remove}
               />
             ))}

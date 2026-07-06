@@ -89,6 +89,9 @@ pub async fn mount_network_drive(state: State<'_, AppState>, drive_id: String) -
         _ => return Err(AppError::General(format!("Unsupported protocol: {}", drive.protocol))),
     }
 
+    // Id marker at the mount root lets scans map paths to this drive
+    network::ensure_id_marker(&drive.mount_point, &drive.id);
+
     // Upsert into storage_devices so scanning/file tracking works
     let disk = DetectedDisk {
         id: drive.id.clone(),

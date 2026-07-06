@@ -207,6 +207,8 @@ async fn auto_mount_network_drives(
             }
         }
 
+        network::ensure_id_marker(&drive.mount_point, &drive.id);
+
         // Upsert into storage_devices
         let disk = DetectedDisk {
             id: drive.id.clone(),
