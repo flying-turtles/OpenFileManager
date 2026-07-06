@@ -1,10 +1,11 @@
 import { useState, useEffect, useMemo } from "react";
 import { convertFileSrc } from "@tauri-apps/api/core";
 import { open } from "@tauri-apps/plugin-dialog";
+import { revealItemInDir } from "@tauri-apps/plugin-opener";
 import { useSimilar } from "../hooks/useSimilar";
 import { useDevices } from "../hooks/useDevices";
 import { useFocusTrap } from "../hooks/useFocusTrap";
-import { resolveFilePath, getThumbnail } from "../api/commands";
+import { resolveFilePath, getThumbnail, openFile } from "../api/commands";
 import type { SimilarFile, SimilarGroup, BulkDeleteEvent, BulkDeleteResult } from "../types";
 import { PermanentToggle } from "../components/FileTable";
 import { formatBytes } from "../utils/format";
@@ -280,6 +281,33 @@ export function Similar() {
     if (phase === "ready") loadGroups(maxDistance, deviceFilter || undefined);
   };
 
+  // Open the file in its default app (Preview for images) — first
+  // connected copy that resolves wins
+  const handlePreview = async (file: SimilarFile) => {
+    for (const loc of file.locations) {
+      if (!connectedDeviceIds.has(loc.deviceId)) continue;
+      try {
+        await openFile(loc.deviceId, loc.filePath);
+        return;
+      } catch {
+        // try next location
+      }
+    }
+  };
+
+  const handleReveal = async (file: SimilarFile) => {
+    for (const loc of file.locations) {
+      if (!connectedDeviceIds.has(loc.deviceId)) continue;
+      try {
+        const abs = await resolveFilePath(loc.deviceId, loc.filePath);
+        await revealItemInDir(abs);
+        return;
+      } catch {
+        // try next location
+      }
+    }
+  };
+
   return (
     <div className="page">
       <h1>Similar Media</h1>
@@ -436,21 +464,43 @@ export function Similar() {
                       <span className={`similar-badge ${isKeeper ? "badge-keep" : "badge-delete"}`}>
                         {isKeeper ? "Keep" : "Delete"}
                       </span>
-                      <button
-                        className="similar-delete-everywhere"
-                        disabled={offline}
-                        title={
-                          offline
-                            ? "No copies on connected drives"
-                            : "Delete every connected copy of this file"
-                        }
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          setDeleteFileTarget(file);
-                        }}
-                      >
-                        Delete everywhere
-                      </button>
+                      <div className="similar-card-actions">
+                        <button
+                          disabled={offline}
+                          title={offline ? "No copies on connected drives" : "Open in Preview"}
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            handlePreview(file);
+                          }}
+                        >
+                          Preview
+                        </button>
+                        <button
+                          disabled={offline}
+                          title={offline ? "No copies on connected drives" : "Show in Finder"}
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            handleReveal(file);
+                          }}
+                        >
+                          Finder
+                        </button>
+                        <button
+                          className="similar-action-delete"
+                          disabled={offline}
+                          title={
+                            offline
+                              ? "No copies on connected drives"
+                              : "Delete every connected copy of this file"
+                          }
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setDeleteFileTarget(file);
+                          }}
+                        >
+                          Delete
+                        </button>
+                      </div>
                     </div>
                   );
                 })}

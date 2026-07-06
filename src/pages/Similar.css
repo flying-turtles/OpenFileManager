@@ -121,23 +121,41 @@
   background: var(--danger);
 }
 
-.similar-delete-everywhere {
-  display: block;
-  width: 100%;
-  border: none;
+.similar-card-actions {
+  display: flex;
   border-top: 1px solid var(--border);
+}
+
+.similar-card-actions button {
+  flex: 1;
+  border: none;
   border-radius: 0;
   background: none;
-  color: var(--danger);
-  font-size: 11px;
-  padding: 6px 8px;
-}
-
-.similar-delete-everywhere:hover:not(:disabled) {
-  background: rgba(231, 76, 60, 0.12);
-  border-color: var(--border);
-}
-
-.similar-delete-everywhere:disabled {
   color: var(--text-muted);
+  font-size: 11px;
+  padding: 6px 4px;
+}
+
+.similar-card-actions button + button {
+  border-left: 1px solid var(--border);
+}
+
+.similar-card-actions button:hover:not(:disabled) {
+  background: var(--bg-hover);
+  border-color: var(--border);
+  color: var(--text);
+}
+
+.similar-card-actions .similar-action-delete {
+  color: var(--danger);
+}
+
+.similar-card-actions .similar-action-delete:hover:not(:disabled) {
+  background: rgba(231, 76, 60, 0.12);
+  color: var(--danger);
+}
+
+.similar-card-actions button:disabled {
+  color: var(--text-muted);
+  opacity: 0.5;
 }
