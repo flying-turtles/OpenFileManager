@@ -89,6 +89,15 @@ pub async fn mount_network_drive(state: State<'_, AppState>, drive_id: String) -
         _ => return Err(AppError::General(format!("Unsupported protocol: {}", drive.protocol))),
     }
 
+    // Only proceed once the mount is really up: writing the id marker into a
+    // dead mount point puts it on the local disk instead of the share.
+    if !network::is_mountpoint(&drive.mount_point) {
+        return Err(AppError::General(format!(
+            "Mount did not appear at {}",
+            drive.mount_point
+        )));
+    }
+
     // Id marker at the mount root lets scans map paths to this drive.
     // Adopts a pre-existing marker so previously indexed files stay attached.
     let device_id = network::effective_device_id(&drive.mount_point, &drive.id);

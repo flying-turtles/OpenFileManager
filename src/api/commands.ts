@@ -274,6 +274,10 @@ export async function openFile(
   return invoke("open_file", { deviceId, filePath });
 }
 
+export async function revealInFinder(path: string): Promise<void> {
+  return invoke("reveal_in_finder", { path });
+}
+
 export async function checkProjectTransfer(
   projectId: number,
   targetDeviceId: string

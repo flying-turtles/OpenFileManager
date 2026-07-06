@@ -50,6 +50,13 @@ fn hamming(a: u64, b: u64) -> u32 {
     (a ^ b).count_ones()
 }
 
+/// Near-uniform images (black video poster frames, blank scans, plain sky)
+/// collapse to almost all-zero or all-one hashes; clustering them chains
+/// thousands of unrelated files into one group.
+pub fn is_degenerate(hash: u64) -> bool {
+    !(4..=60).contains(&hash.count_ones())
+}
+
 /// Cluster hashes into groups of visually similar images.
 ///
 /// Uses 8-bit banding: two hashes within hamming distance 7 must share at
@@ -127,6 +134,14 @@ mod tests {
         let groups = cluster(&[a, b, c], 5);
         assert_eq!(groups.len(), 1);
         assert_eq!(groups[0].len(), 3);
+    }
+
+    #[test]
+    fn degenerate_hashes_detected() {
+        assert!(is_degenerate(0));
+        assert!(is_degenerate(u64::MAX));
+        assert!(is_degenerate(0b111)); // 3 bits: near-black poster frame
+        assert!(!is_degenerate(0x00FF_00FF_00FF_00FF)); // 32 bits: normal image
     }
 
     #[test]

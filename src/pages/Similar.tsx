@@ -1,11 +1,10 @@
 import { useState, useEffect, useMemo } from "react";
 import { convertFileSrc } from "@tauri-apps/api/core";
 import { open } from "@tauri-apps/plugin-dialog";
-import { revealItemInDir } from "@tauri-apps/plugin-opener";
 import { useSimilar } from "../hooks/useSimilar";
 import { useDevices } from "../hooks/useDevices";
 import { useFocusTrap } from "../hooks/useFocusTrap";
-import { resolveFilePath, getThumbnail, openFile } from "../api/commands";
+import { resolveFilePath, getThumbnail, openFile, revealInFinder } from "../api/commands";
 import type { SimilarFile, SimilarGroup, BulkDeleteEvent, BulkDeleteResult } from "../types";
 import { PermanentToggle } from "../components/FileTable";
 import { formatBytes } from "../utils/format";
@@ -300,7 +299,7 @@ export function Similar() {
       if (!connectedDeviceIds.has(loc.deviceId)) continue;
       try {
         const abs = await resolveFilePath(loc.deviceId, loc.filePath);
-        await revealItemInDir(abs);
+        await revealInFinder(abs);
         return;
       } catch {
         // try next location

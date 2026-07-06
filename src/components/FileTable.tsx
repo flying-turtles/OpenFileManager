@@ -1,8 +1,7 @@
 import { useState, useRef, useMemo, useCallback } from "react";
 import { useVirtualizer } from "@tanstack/react-virtual";
-import { revealItemInDir } from "@tauri-apps/plugin-opener";
 import type { FileLocation, FileSafety, BulkDeleteEvent, BulkDeleteResult } from "../types";
-import { resolveFilePath, openFile } from "../api/commands";
+import { resolveFilePath, openFile, revealInFinder } from "../api/commands";
 import { SafetyBadge } from "./SafetyBadge";
 import { FilePreview } from "./FilePreview";
 import { useFocusTrap } from "../hooks/useFocusTrap";
@@ -205,7 +204,7 @@ export function FileTable({ files, totalCount, deviceNames, connectedDeviceIds, 
   const handleRevealFile = useCallback(async (loc: FileLocation) => {
     try {
       const absPath = await resolveFilePath(loc.deviceId, loc.filePath);
-      await revealItemInDir(absPath);
+      await revealInFinder(absPath);
     } catch (e) {
       console.error("Failed to reveal file:", e);
     }

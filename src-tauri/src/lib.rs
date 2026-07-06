@@ -134,6 +134,7 @@ pub fn run() {
             commands::resolve_file_path,
             commands::get_thumbnail,
             commands::open_file,
+            commands::reveal_in_finder,
             commands::check_project_transfer,
             commands::start_project_transfer,
             commands::cancel_project_transfer,

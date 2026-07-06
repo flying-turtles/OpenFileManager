@@ -58,7 +58,7 @@ pub async fn detect_devices(state: State<'_, AppState>) -> Result<Vec<StorageDev
         };
         let _ = db::upsert_device(&state.pool, &updated).await;
     }
-    Ok(mark_connected(all, &connected_ids))
+    Ok(mark_connected(all, &connected_ids).await)
 }
 
 #[tauri::command]
@@ -66,7 +66,7 @@ pub async fn get_devices(state: State<'_, AppState>) -> Result<Vec<StorageDevice
     let disks = devices::detect_volumes();
     let connected_ids: HashSet<String> = disks.iter().map(|d| d.id.clone()).collect();
     let all = db::get_all_devices(&state.pool).await?;
-    Ok(mark_connected(all, &connected_ids))
+    Ok(mark_connected(all, &connected_ids).await)
 }
 
 #[tauri::command]

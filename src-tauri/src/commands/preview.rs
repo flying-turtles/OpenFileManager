@@ -14,9 +14,9 @@ pub async fn resolve_file_path(
 ) -> Result<String, AppError> {
     let device = db::get_device(&state.pool, &device_id).await?;
     let full = Path::new(&device.mount_point).join(&file_path);
-    if !full.exists() {
+    if !super::path_online(&full).await {
         return Err(AppError::General(format!(
-            "File not found: {}",
+            "File not reachable (drive offline?): {}",
             full.display()
         )));
     }
@@ -54,18 +54,30 @@ pub async fn get_thumbnail(
         return Ok(cached_path.to_string_lossy().into_owned());
     }
 
-    // Use qlmanage to generate thumbnail
-    let output = tokio::process::Command::new("qlmanage")
-        .args([
-            "-t",
-            "-s",
-            &size.to_string(),
-            "-o",
-            &cache_dir.to_string_lossy(),
-            &path,
-        ])
-        .output()
-        .await?;
+    // Cap concurrent qlmanage processes and give each a deadline: a stalled
+    // network mount otherwise accumulates hundreds of hung child processes.
+    static QL_SEM: tokio::sync::Semaphore = tokio::sync::Semaphore::const_new(4);
+    let _permit = QL_SEM
+        .acquire()
+        .await
+        .map_err(|e| AppError::General(e.to_string()))?;
+
+    let output = tokio::time::timeout(
+        std::time::Duration::from_secs(15),
+        tokio::process::Command::new("qlmanage")
+            .args([
+                "-t",
+                "-s",
+                &size.to_string(),
+                "-o",
+                &cache_dir.to_string_lossy(),
+                &path,
+            ])
+            .kill_on_drop(true)
+            .output(),
+    )
+    .await
+    .map_err(|_| AppError::General(format!("thumbnail timed out: {}", path)))??;
 
     if !output.status.success() {
         return Err(AppError::General(format!(
@@ -114,12 +126,33 @@ pub async fn open_file(
 ) -> Result<(), AppError> {
     let device = db::get_device(&state.pool, &device_id).await?;
     let full = Path::new(&device.mount_point).join(&file_path);
-    if !full.exists() {
-        return Err(AppError::General(format!("File not found: {}", full.display())));
+    if !super::path_online(&full).await {
+        return Err(AppError::General(format!(
+            "File not reachable (drive offline?): {}",
+            full.display()
+        )));
     }
-    let output = std::process::Command::new("open")
+    let output = tokio::process::Command::new("open")
         .arg(&full)
-        .output()?;
+        .output()
+        .await?;
+    if !output.status.success() {
+        return Err(AppError::General(
+            String::from_utf8_lossy(&output.stderr).to_string(),
+        ));
+    }
+    Ok(())
+}
+
+/// Reveal a file in Finder via `open -R`. Runs as a subprocess instead of
+/// NSWorkspace: AppKit is main-thread-only and throws an ObjC exception on
+/// tokio workers, which aborts the process.
+#[tauri::command]
+pub async fn reveal_in_finder(path: String) -> Result<(), AppError> {
+    let output = tokio::process::Command::new("open")
+        .args(["-R", &path])
+        .output()
+        .await?;
     if !output.status.success() {
         return Err(AppError::General(
             String::from_utf8_lossy(&output.stderr).to_string(),

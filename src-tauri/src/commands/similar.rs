@@ -108,7 +108,9 @@ pub async fn scan_similar_pictures(
 }
 
 /// Map an absolute folder path to (device_id, relative prefix) using the
-/// longest matching connected mount point. Empty prefix = whole device.
+/// longest matching mount point. Matches against ALL indexed devices — the
+/// user just picked the folder in a dialog, so it exists; deciding "offline"
+/// here on a momentarily slow mount produces confusing errors.
 fn resolve_folder(
     folder: &str,
     mounts: &HashMap<String, String>,
@@ -121,7 +123,10 @@ fn resolve_folder(
         }
     }
     let (id, mp) = best.ok_or_else(|| {
-        AppError::General("Folder is not on any connected indexed drive".into())
+        AppError::General(format!(
+            "Folder is not on any indexed drive: {}",
+            folder
+        ))
     })?;
     let rel = folder_path
         .strip_prefix(mp)
@@ -140,21 +145,35 @@ async fn run_similarity_scan(
     channel: &Channel<SimilarScanEvent>,
     token: &CancellationToken,
 ) -> Result<(), AppError> {
-    // Connected devices = mount point currently exists; optionally one device only
     let devices = db::get_all_devices(&state.pool).await?;
-    let mut mounts: HashMap<String, String> = devices
-        .into_iter()
-        .filter(|d| Path::new(&d.mount_point).exists())
-        .filter(|d| device_id.as_ref().map_or(true, |id| &d.id == id))
-        .map(|d| (d.id, d.mount_point))
-        .collect();
+    let all_mounts: HashMap<String, String> =
+        devices.into_iter().map(|d| (d.id, d.mount_point)).collect();
 
-    // A folder narrows the scan to one device + path prefix (subfolders included)
+    // A folder pins the scan to its device + path prefix (subfolders
+    // included) and overrides any device filter — the folder is unambiguous.
+    let mut mounts = all_mounts.clone();
     let mut path_prefix: Option<String> = None;
     if let Some(folder) = &folder {
-        let (dev, prefix) = resolve_folder(folder, &mounts)?;
+        let (dev, prefix) = resolve_folder(folder, &all_mounts)?;
         mounts.retain(|id, _| id == &dev);
         path_prefix = prefix;
+    } else if let Some(id) = &device_id {
+        mounts.retain(|mid, _| mid == id);
+    }
+
+    // Drop unreachable mounts; hashing files on a dead network mount would
+    // hang. Only an error when it leaves nothing to scan.
+    let mut online = HashMap::new();
+    for (id, mp) in mounts {
+        if super::path_online_within(&mp, 15).await {
+            online.insert(id, mp);
+        }
+    }
+    let mounts = online;
+    if mounts.is_empty() {
+        return Err(AppError::General(
+            "No reachable drive to scan (is the drive mounted?)".into(),
+        ));
     }
     let connected_ids: Vec<String> = mounts.keys().cloned().collect();
 
@@ -237,28 +256,40 @@ pub async fn get_similar_groups(
     let mut scope_device = device_id;
     let mut scope_prefix: Option<String> = None;
     if let Some(folder) = &folder {
+        // Pure path math over indexed mount points — no reachability check
+        // needed to scope the already-computed groups.
         let devices = db::get_all_devices(&state.pool).await?;
-        let mounts: HashMap<String, String> = devices
-            .into_iter()
-            .filter(|d| Path::new(&d.mount_point).exists())
-            .map(|d| (d.id, d.mount_point))
-            .collect();
+        let mounts: HashMap<String, String> =
+            devices.into_iter().map(|d| (d.id, d.mount_point)).collect();
         let (dev, prefix) = resolve_folder(folder, &mounts)?;
         scope_device = Some(dev);
         scope_prefix = prefix;
     }
 
-    let rows = db::get_image_hashes(&state.pool).await?;
+    let rows: Vec<_> = db::get_image_hashes(&state.pool)
+        .await?
+        .into_iter()
+        .filter(|(_, d, _, _)| !similarity::is_degenerate(*d as u64))
+        .collect();
     let hashes: Vec<u64> = rows.iter().map(|(_, d, _, _)| *d as u64).collect();
 
     let clusters = similarity::cluster(&hashes, max_distance.unwrap_or(5));
+
+    // One batched query for all clustered files; per-file lookups starve the
+    // pool once clusters get big.
+    let clustered_hashes: Vec<String> = clusters
+        .iter()
+        .flatten()
+        .map(|&idx| rows[idx].0.clone())
+        .collect();
+    let locations_map = db::get_locations_for_hashes(&state.pool, &clustered_hashes).await?;
 
     let mut groups = Vec::with_capacity(clusters.len());
     for cluster in clusters {
         let mut files = Vec::with_capacity(cluster.len());
         for idx in cluster {
             let (blake3_hash, _, representative_name, file_size) = &rows[idx];
-            let locations = db::get_file_locations(&state.pool, blake3_hash).await?;
+            let locations = locations_map.get(blake3_hash).cloned().unwrap_or_default();
             if locations.is_empty() {
                 continue;
             }
