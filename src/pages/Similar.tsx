@@ -1,5 +1,6 @@
 import { useState, useEffect, useMemo } from "react";
 import { convertFileSrc } from "@tauri-apps/api/core";
+import { open } from "@tauri-apps/plugin-dialog";
 import { useSimilar } from "../hooks/useSimilar";
 import { useDevices } from "../hooks/useDevices";
 import { useFocusTrap } from "../hooks/useFocusTrap";
