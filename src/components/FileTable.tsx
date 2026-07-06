@@ -1,7 +1,7 @@
 import { useState, useRef, useMemo, useCallback } from "react";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { revealItemInDir } from "@tauri-apps/plugin-opener";
-import type { FileLocation, FileSafety } from "../types";
+import type { FileLocation, FileSafety, BulkDeleteEvent, BulkDeleteResult } from "../types";
 import { resolveFilePath, openFile } from "../api/commands";
 import { SafetyBadge } from "./SafetyBadge";
 import { FilePreview } from "./FilePreview";
@@ -39,6 +39,96 @@ function DeleteCopyModal({ path, deleting, onCancel, onDelete }: {
   );
 }
 
+function DeleteAllCopiesModal({ fileName, locations, deviceNames, onConfirm, onClose }: {
+  fileName: string;
+  locations: FileLocation[];
+  deviceNames?: Record<string, string>;
+  onConfirm: (locationIds: number[], onEvent: (e: BulkDeleteEvent) => void) => Promise<BulkDeleteResult>;
+  onClose: (deletedIds: number[]) => void;
+}) {
+  const trapRef = useFocusTrap<HTMLDivElement>();
+  const [confirmText, setConfirmText] = useState("");
+  const [deleting, setDeleting] = useState(false);
+  const [result, setResult] = useState<BulkDeleteResult | null>(null);
+
+  const handleDelete = async () => {
+    setDeleting(true);
+    try {
+      const res = await onConfirm(locations.map((l) => l.id), () => {});
+      setResult(res);
+    } catch (e: any) {
+      setResult({ succeeded: [], failed: [{ locationId: 0, filePath: "", error: String(e) }] });
+    } finally {
+      setDeleting(false);
+    }
+  };
+
+  const close = () => onClose(result?.succeeded ?? []);
+
+  return (
+    <div className="modal-overlay" onClick={() => !deleting && close()} role="dialog" aria-label="Delete file everywhere" aria-modal="true" onKeyDown={(e) => { if (e.key === "Escape" && !deleting) close(); }}>
+      <div className="modal-content" ref={trapRef} onClick={(e) => e.stopPropagation()} style={{ maxWidth: 560 }}>
+        {result ? (
+          <>
+            <h2>Deleted</h2>
+            <p>{result.succeeded.length} cop{result.succeeded.length !== 1 ? "ies" : "y"} of "{fileName}" moved to the Trash.</p>
+            {result.failed.length > 0 && (
+              <>
+                <p className="bulk-delete-warning">{result.failed.length} failed:</p>
+                <div className="bulk-delete-file-list">
+                  {result.failed.map((f, i) => (
+                    <div key={i} className="bulk-delete-file-item">
+                      <span className="bulk-delete-file-path">{f.filePath}</span>
+                      <span className="text-muted-color text-xs">{f.error}</span>
+                    </div>
+                  ))}
+                </div>
+              </>
+            )}
+            <div className="form-actions">
+              <button className="btn-primary" onClick={close}>Close</button>
+            </div>
+          </>
+        ) : (
+          <>
+            <h2>Delete "{fileName}" everywhere?</h2>
+            <p className="bulk-delete-warning">
+              All {locations.length} cop{locations.length !== 1 ? "ies" : "y"} on connected drives
+              will be moved to the Trash. Copies on disconnected drives are kept.
+            </p>
+            <div className="bulk-delete-file-list">
+              {locations.map((l) => (
+                <div key={l.id} className="bulk-delete-file-item">
+                  <span className="bulk-delete-file-path">
+                    [{deviceNames?.[l.deviceId] ?? l.deviceId.slice(0, 8)}] {l.filePath}
+                  </span>
+                  <span className="text-muted-color text-xs">{formatBytes(l.fileSize)}</span>
+                </div>
+              ))}
+            </div>
+            <div className="form-group" style={{ marginTop: 16 }}>
+              <label>Type "<strong>delete</strong>" to confirm</label>
+              <input
+                type="text"
+                value={confirmText}
+                onChange={(e) => setConfirmText(e.target.value)}
+                placeholder="delete"
+                autoFocus
+              />
+            </div>
+            <div className="form-actions">
+              <button onClick={close}>Cancel</button>
+              <button className="btn-danger" onClick={handleDelete} disabled={confirmText !== "delete" || deleting}>
+                {deleting ? "Deleting..." : `Delete all copies (${locations.length})`}
+              </button>
+            </div>
+          </>
+        )}
+      </div>
+    </div>
+  );
+}
+
 type RowItem =
   | { type: "file"; file: FileLocation }
   | { type: "detail"; file: FileLocation; safety: FileSafety };
@@ -51,12 +141,14 @@ interface Props {
   selectedDeviceId?: string;
   onGetSafety?: (hash: string) => Promise<FileSafety | null>;
   onDeleteLocation?: (locationId: number, filePath: string) => Promise<void>;
+  onBulkDelete?: (locationIds: number[], onEvent: (e: BulkDeleteEvent) => void) => Promise<BulkDeleteResult>;
 }
 
-export function FileTable({ files, totalCount, deviceNames, connectedDeviceIds, selectedDeviceId, onGetSafety, onDeleteLocation }: Props) {
+export function FileTable({ files, totalCount, deviceNames, connectedDeviceIds, selectedDeviceId, onGetSafety, onDeleteLocation, onBulkDelete }: Props) {
   const [expandedId, setExpandedId] = useState<number | null>(null);
   const [safety, setSafety] = useState<FileSafety | null>(null);
   const [confirmDelete, setConfirmDelete] = useState<{ id: number; path: string } | null>(null);
+  const [confirmDeleteAll, setConfirmDeleteAll] = useState<{ fileName: string; locations: FileLocation[] } | null>(null);
   const [deleting, setDeleting] = useState(false);
   const parentRef = useRef<HTMLDivElement>(null);
 
@@ -197,6 +289,31 @@ export function FileTable({ files, totalCount, deviceNames, connectedDeviceIds, 
                           {row.safety.hotCopies} hot, {row.safety.coldCopies}{" "}
                           cold)
                         </span>
+                        {onBulkDelete && (() => {
+                          const connected = row.safety.locations.filter(
+                            (l) => connectedDeviceIds?.has(l.deviceId) ?? false
+                          );
+                          return (
+                            <button
+                              className="btn-danger"
+                              disabled={connected.length === 0}
+                              title={
+                                connected.length === 0
+                                  ? "No copies on connected drives"
+                                  : "Delete every copy on connected drives"
+                              }
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                setConfirmDeleteAll({
+                                  fileName: row.file.fileName,
+                                  locations: connected,
+                                });
+                              }}
+                            >
+                              Delete Everywhere
+                            </button>
+                          );
+                        })()}
                         <div className="locations-list">
                           {row.safety.locations.map((loc) => {
                             const connected = connectedDeviceIds?.has(loc.deviceId) ?? false;
@@ -281,6 +398,32 @@ export function FileTable({ files, totalCount, deviceNames, connectedDeviceIds, 
           deleting={deleting}
           onCancel={() => setConfirmDelete(null)}
           onDelete={handleDelete}
+        />
+      )}
+
+      {confirmDeleteAll && onBulkDelete && (
+        <DeleteAllCopiesModal
+          fileName={confirmDeleteAll.fileName}
+          locations={confirmDeleteAll.locations}
+          deviceNames={deviceNames}
+          onConfirm={onBulkDelete}
+          onClose={(deletedIds) => {
+            setConfirmDeleteAll(null);
+            if (deletedIds.length > 0 && safety) {
+              const deleted = new Set(deletedIds);
+              const remaining = safety.locations.filter((l) => !deleted.has(l.id));
+              if (remaining.length === 0) {
+                setExpandedId(null);
+                setSafety(null);
+              } else {
+                setSafety({
+                  ...safety,
+                  totalCopies: safety.totalCopies - (safety.locations.length - remaining.length),
+                  locations: remaining,
+                });
+              }
+            }
+          }}
         />
       )}
     </div>

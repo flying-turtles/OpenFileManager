@@ -120,3 +120,24 @@
 .similar-badge.badge-delete {
   background: var(--danger);
 }
+
+.similar-delete-everywhere {
+  display: block;
+  width: 100%;
+  border: none;
+  border-top: 1px solid var(--border);
+  border-radius: 0;
+  background: none;
+  color: var(--danger);
+  font-size: 11px;
+  padding: 6px 8px;
+}
+
+.similar-delete-everywhere:hover:not(:disabled) {
+  background: rgba(231, 76, 60, 0.12);
+  border-color: var(--border);
+}
+
+.similar-delete-everywhere:disabled {
+  color: var(--text-muted);
+}

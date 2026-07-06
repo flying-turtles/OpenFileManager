@@ -152,15 +152,18 @@ export function useFiles() {
   ): Promise<BulkDeleteResult> => {
     const result = await bulkDeleteFileCopies(locationIds, onEvent ?? (() => {}));
     const succeededSet = new Set(result.succeeded);
-    setDuplicateFiles((prev) =>
+    const prune = (prev: FileSafety[]) =>
       prev
         .map((sf) => ({
           ...sf,
           totalCopies: sf.totalCopies - sf.locations.filter((l) => succeededSet.has(l.id)).length,
           locations: sf.locations.filter((l) => !succeededSet.has(l.id)),
         }))
-        .filter((sf) => sf.locations.length > 0)
-    );
+        .filter((sf) => sf.locations.length > 0);
+    setDuplicateFiles(prune);
+    setUnsafeFiles(prune);
+    setSafeFiles(prune);
+    setFiles((prev) => prev.filter((l) => !succeededSet.has(l.id)));
     return result;
   }, []);
 

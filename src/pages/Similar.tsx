@@ -190,6 +190,8 @@ export function Similar() {
   // keepers per group: blake3 hashes of the files to keep (multi-select)
   const [keepers, setKeepers] = useState<Record<number, string[]>>({});
   const [deleteTarget, setDeleteTarget] = useState<number | null>(null);
+  // Delete every connected copy of one specific file
+  const [deleteFileTarget, setDeleteFileTarget] = useState<SimilarFile | null>(null);
 
   const connectedDeviceIds = useMemo(
     () => new Set(devices.filter((d) => d.isConnected).map((d) => d.id)),
@@ -209,18 +211,20 @@ export function Similar() {
     });
   };
 
+  const planFor = (file: SimilarFile) => {
+    const connected = file.locations.filter((l) => connectedDeviceIds.has(l.deviceId));
+    return {
+      file,
+      locationIds: connected.map((l) => l.id),
+      skippedOffline: file.locations.length - connected.length,
+    };
+  };
+
   const deletionPlan = (groupIdx: number, group: SimilarGroup) => {
     const keep = new Set(keepersFor(groupIdx, group));
     return group.files
       .filter((f) => !keep.has(f.blake3Hash))
-      .map((file) => {
-        const connected = file.locations.filter((l) => connectedDeviceIds.has(l.deviceId));
-        return {
-          file,
-          locationIds: connected.map((l) => l.id),
-          skippedOffline: file.locations.length - connected.length,
-        };
-      })
+      .map(planFor)
       .filter((p) => p.locationIds.length > 0);
   };
 
@@ -407,6 +411,21 @@ export function Similar() {
                       <span className={`similar-badge ${isKeeper ? "badge-keep" : "badge-delete"}`}>
                         {isKeeper ? "Keep" : "Delete"}
                       </span>
+                      <button
+                        className="similar-delete-everywhere"
+                        disabled={offline}
+                        title={
+                          offline
+                            ? "No copies on connected drives"
+                            : "Delete every connected copy of this file"
+                        }
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setDeleteFileTarget(file);
+                        }}
+                      >
+                        Delete everywhere
+                      </button>
                     </div>
                   );
                 })}
@@ -423,6 +442,18 @@ export function Similar() {
           onClose={() => {
             setDeleteTarget(null);
             // Group indices shift after deletion — drop stale keeper picks
+            setKeepers({});
+          }}
+        />
+      )}
+
+      {deleteFileTarget && (
+        <DeleteSimilarModal
+          files={[planFor(deleteFileTarget)]}
+          nothingKept
+          onConfirm={deleteFiles}
+          onClose={() => {
+            setDeleteFileTarget(null);
             setKeepers({});
           }}
         />

@@ -418,6 +418,7 @@ export function Projects({ onTransferProject }: ProjectsProps) {
             connectedDeviceIds={connectedDeviceIds}
             onGetSafety={(hash) => getFileSafety(hash)}
             onDeleteLocation={safetyFilter === "duplicates" ? handleDeleteFileCopy : undefined}
+            onBulkDelete={handleBulkDelete}
           />
         )}
         {!loading && displayFiles.length === 0 && (
