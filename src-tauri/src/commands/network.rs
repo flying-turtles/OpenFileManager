@@ -18,7 +18,7 @@ pub async fn add_network_drive(
     device_type: String,
 ) -> Result<NetworkDrive, AppError> {
     let id = network::generate_drive_id(&protocol, &host, &share_path);
-    let mount_point = format!("/Volumes/{}", label);
+    let mount_point = network::default_mount_point(&label);
 
     let drive = NetworkDrive {
         id: id.clone(),
@@ -55,7 +55,15 @@ pub async fn get_network_drives(state: State<'_, AppState>) -> Result<Vec<Networ
 
 #[tauri::command]
 pub async fn mount_network_drive(state: State<'_, AppState>, drive_id: String) -> Result<(), AppError> {
-    let drive = db::get_network_drive(&state.pool, &drive_id).await?;
+    let mut drive = db::get_network_drive(&state.pool, &drive_id).await?;
+
+    // Drives added before the fix point at /Volumes/<label>, which normal
+    // users cannot create on modern macOS — migrate them to the home dir.
+    if drive.mount_point.starts_with("/Volumes/") && !network::is_mountpoint(&drive.mount_point) {
+        let new_mount = network::default_mount_point(&drive.label);
+        db::update_network_drive_mount_point(&state.pool, &drive_id, &new_mount).await?;
+        drive.mount_point = new_mount;
+    }
 
     match drive.protocol.as_str() {
         "smb" => {

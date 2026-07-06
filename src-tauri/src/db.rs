@@ -1352,3 +1352,21 @@ pub async fn touch_full_hash_verified(pool: &DbPool, location_id: i64) -> Result
         .await?;
     Ok(())
 }
+
+pub async fn update_network_drive_mount_point(
+    pool: &DbPool,
+    id: &str,
+    mount_point: &str,
+) -> Result<(), AppError> {
+    sqlx::query("UPDATE network_drives SET mount_point = ? WHERE id = ?")
+        .bind(mount_point)
+        .bind(id)
+        .execute(pool)
+        .await?;
+    sqlx::query("UPDATE storage_devices SET mount_point = ? WHERE id = ?")
+        .bind(mount_point)
+        .bind(id)
+        .execute(pool)
+        .await?;
+    Ok(())
+}

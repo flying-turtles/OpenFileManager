@@ -158,7 +158,14 @@ async fn auto_mount_network_drives(
 ) -> Result<(), error::AppError> {
     let drives = db::get_all_network_drives(pool).await?;
 
-    for drive in drives {
+    for mut drive in drives {
+        // Migrate pre-fix mount points under root-only /Volumes to the home dir
+        if drive.mount_point.starts_with("/Volumes/") && !network::is_mountpoint(&drive.mount_point) {
+            let new_mount = network::default_mount_point(&drive.label);
+            db::update_network_drive_mount_point(pool, &drive.id, &new_mount).await?;
+            drive.mount_point = new_mount;
+        }
+
         let already_mounted = network::is_mountpoint(&drive.mount_point);
 
         if !already_mounted {

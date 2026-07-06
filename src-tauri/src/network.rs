@@ -66,6 +66,17 @@ pub fn keychain_delete(drive_id: &str, username: &str) -> Result<(), AppError> {
     Ok(())
 }
 
+/// Mount points live in the user's home dir — /Volumes is root-only on
+/// modern macOS, so creating a directory there fails with EACCES.
+pub fn default_mount_point(label: &str) -> String {
+    let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".to_string());
+    let safe: String = label
+        .chars()
+        .map(|c| if c == '/' || c == ':' { '_' } else { c })
+        .collect();
+    format!("{}/NetworkDrives/{}", home, safe)
+}
+
 pub fn mount_smb(
     host: &str,
     share: &str,
