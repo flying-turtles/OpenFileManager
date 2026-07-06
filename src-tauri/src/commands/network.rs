@@ -89,12 +89,13 @@ pub async fn mount_network_drive(state: State<'_, AppState>, drive_id: String) -
         _ => return Err(AppError::General(format!("Unsupported protocol: {}", drive.protocol))),
     }
 
-    // Id marker at the mount root lets scans map paths to this drive
-    network::ensure_id_marker(&drive.mount_point, &drive.id);
+    // Id marker at the mount root lets scans map paths to this drive.
+    // Adopts a pre-existing marker so previously indexed files stay attached.
+    let device_id = network::effective_device_id(&drive.mount_point, &drive.id);
 
     // Upsert into storage_devices so scanning/file tracking works
     let disk = DetectedDisk {
-        id: drive.id.clone(),
+        id: device_id.clone(),
         label: drive.label.clone(),
         mount_point: drive.mount_point.clone(),
         total_bytes: 0,
@@ -102,7 +103,7 @@ pub async fn mount_network_drive(state: State<'_, AppState>, drive_id: String) -
         is_removable: false,
     };
     db::upsert_device(&state.pool, &disk).await?;
-    db::set_device_type(&state.pool, &drive.id, &drive.device_type).await?;
+    db::set_device_type(&state.pool, &device_id, &drive.device_type).await?;
 
     Ok(())
 }

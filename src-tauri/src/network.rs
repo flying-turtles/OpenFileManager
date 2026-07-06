@@ -186,17 +186,22 @@ pub fn is_mountpoint(mount_point: &str) -> bool {
         .unwrap_or(false)
 }
 
-/// Best-effort: place the device-id marker at the mount root so scans can
-/// map paths on this share to the drive. Read-only shares just log.
-pub fn ensure_id_marker(mount_point: &str, id: &str) {
+/// Ensure a device-id marker exists at the mount root so scans can map paths
+/// on this share to a device. If a marker is already there (e.g. the folder
+/// was indexed before, or a subfolder mount of a previously mounted share),
+/// ADOPT its id — never overwrite, or existing indexed files would detach.
+/// Returns the effective device id for this mount. Best-effort on read-only
+/// shares: falls back to the drive id and logs.
+pub fn effective_device_id(mount_point: &str, fallback_id: &str) -> String {
     let marker = Path::new(mount_point).join(crate::devices::FILEMANAGER_ID_FILE);
-    let existing = std::fs::read_to_string(&marker)
-        .map(|s| s.trim().to_string())
-        .unwrap_or_default();
-    if existing == id {
-        return;
+    if let Ok(existing) = std::fs::read_to_string(&marker) {
+        let existing = existing.trim().to_string();
+        if !existing.is_empty() {
+            return existing;
+        }
     }
-    if let Err(e) = std::fs::write(&marker, id) {
+    if let Err(e) = std::fs::write(&marker, fallback_id) {
         log::warn!("Could not write id marker to {}: {}", mount_point, e);
     }
+    fallback_id.to_string()
 }

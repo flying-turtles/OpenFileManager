@@ -19,6 +19,7 @@ export function AddNetworkDriveModal({ onAdd, onClose }: Props) {
   const [protocol, setProtocol] = useState("smb");
   const [host, setHost] = useState("");
   const [sharePath, setSharePath] = useState("");
+  const [subfolder, setSubfolder] = useState("");
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [label, setLabel] = useState("");
@@ -33,7 +34,11 @@ export function AddNetworkDriveModal({ onAdd, onClose }: Props) {
     setSubmitting(true);
     setError("");
     try {
-      await onAdd(protocol, host.trim(), sharePath.trim(), username.trim(), password, label.trim(), deviceType);
+      const sub = subfolder.trim().replace(/^\/+|\/+$/g, "");
+      const fullShare = protocol === "smb" && sub
+        ? `${sharePath.trim().replace(/\/+$/g, "")}/${sub}`
+        : sharePath.trim();
+      await onAdd(protocol, host.trim(), fullShare, username.trim(), password, label.trim(), deviceType);
       onClose();
     } catch (e: any) {
       setError(String(e));
@@ -60,8 +65,19 @@ export function AddNetworkDriveModal({ onAdd, onClose }: Props) {
         </div>
         <div className="form-group">
           <label>{protocol === "smb" ? "Share Name" : "Export Path"}</label>
-          <input type="text" value={sharePath} onChange={(e) => setSharePath(e.target.value)} placeholder={protocol === "smb" ? "Photos" : "/volume1/photos"} />
+          <input type="text" value={sharePath} onChange={(e) => setSharePath(e.target.value)} placeholder={protocol === "smb" ? "storagebox" : "/volume1/photos"} />
         </div>
+        {protocol === "smb" && (
+          <div className="form-group">
+            <label>Subfolder (optional)</label>
+            <input
+              type="text"
+              value={subfolder}
+              onChange={(e) => setSubfolder(e.target.value)}
+              placeholder="media — mounts only this folder of the share"
+            />
+          </div>
+        )}
         {protocol === "smb" && (
           <>
             <div className="form-group">

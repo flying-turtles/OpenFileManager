@@ -207,11 +207,11 @@ async fn auto_mount_network_drives(
             }
         }
 
-        network::ensure_id_marker(&drive.mount_point, &drive.id);
+        let device_id = network::effective_device_id(&drive.mount_point, &drive.id);
 
         // Upsert into storage_devices
         let disk = DetectedDisk {
-            id: drive.id.clone(),
+            id: device_id.clone(),
             label: drive.label.clone(),
             mount_point: drive.mount_point.clone(),
             total_bytes: 0,
@@ -219,7 +219,7 @@ async fn auto_mount_network_drives(
             is_removable: false,
         };
         let _ = db::upsert_device(pool, &disk).await;
-        let _ = db::set_device_type(pool, &drive.id, &drive.device_type).await;
+        let _ = db::set_device_type(pool, &device_id, &drive.device_type).await;
 
         let _ = handle.emit("network-drive-status", serde_json::json!({
             "id": drive.id,
