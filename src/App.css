@@ -867,3 +867,8 @@ select:focus-visible {
   color: var(--danger);
   cursor: pointer;
 }
+
+/* Offline-kept list in delete dialogs — informational, dimmed */
+.offline-kept-list {
+  opacity: 0.65;
+}

@@ -61,9 +61,10 @@ function DeleteCopyModal({ path, deleting, onCancel, onDelete }: {
   );
 }
 
-function DeleteAllCopiesModal({ fileName, locations, deviceNames, onConfirm, onClose }: {
+function DeleteAllCopiesModal({ fileName, locations, offline, deviceNames, onConfirm, onClose }: {
   fileName: string;
   locations: FileLocation[];
+  offline: FileLocation[];
   deviceNames?: Record<string, string>;
   onConfirm: (locationIds: number[], onEvent: (e: BulkDeleteEvent) => void, permanent?: boolean) => Promise<BulkDeleteResult>;
   onClose: (deletedIds: number[]) => void;
@@ -117,8 +118,7 @@ function DeleteAllCopiesModal({ fileName, locations, deviceNames, onConfirm, onC
             <h2>Delete "{fileName}" everywhere?</h2>
             <p className="bulk-delete-warning">
               All {locations.length} cop{locations.length !== 1 ? "ies" : "y"} on connected drives
-              will be {permanent ? "permanently deleted" : "moved to the Trash"}. Copies on
-              disconnected drives are kept.
+              will be {permanent ? "permanently deleted" : "moved to the Trash"}.
             </p>
             <div className="bulk-delete-file-list">
               {locations.map((l) => (
@@ -130,6 +130,23 @@ function DeleteAllCopiesModal({ fileName, locations, deviceNames, onConfirm, onC
                 </div>
               ))}
             </div>
+            {offline.length > 0 && (
+              <>
+                <p className="text-muted-color text-sm" style={{ marginTop: 12, marginBottom: 4 }}>
+                  Kept — drive not connected:
+                </p>
+                <div className="bulk-delete-file-list offline-kept-list">
+                  {offline.map((l) => (
+                    <div key={l.id} className="bulk-delete-file-item">
+                      <span className="bulk-delete-file-path">
+                        [{deviceNames?.[l.deviceId] ?? l.deviceId.slice(0, 8)}] {l.filePath}
+                      </span>
+                      <span className="text-muted-color text-xs">offline</span>
+                    </div>
+                  ))}
+                </div>
+              </>
+            )}
             <PermanentToggle permanent={permanent} onChange={setPermanent} disabled={deleting} />
             <div className="form-group" style={{ marginTop: 16 }}>
               <label>Type "<strong>delete</strong>" to confirm</label>
@@ -173,7 +190,7 @@ export function FileTable({ files, totalCount, deviceNames, connectedDeviceIds, 
   const [expandedId, setExpandedId] = useState<number | null>(null);
   const [safety, setSafety] = useState<FileSafety | null>(null);
   const [confirmDelete, setConfirmDelete] = useState<{ id: number; path: string } | null>(null);
-  const [confirmDeleteAll, setConfirmDeleteAll] = useState<{ fileName: string; locations: FileLocation[] } | null>(null);
+  const [confirmDeleteAll, setConfirmDeleteAll] = useState<{ fileName: string; locations: FileLocation[]; offline: FileLocation[] } | null>(null);
   const [deleting, setDeleting] = useState(false);
   const parentRef = useRef<HTMLDivElement>(null);
 
@@ -332,6 +349,9 @@ export function FileTable({ files, totalCount, deviceNames, connectedDeviceIds, 
                                 setConfirmDeleteAll({
                                   fileName: row.file.fileName,
                                   locations: connected,
+                                  offline: row.safety.locations.filter(
+                                    (l) => !(connectedDeviceIds?.has(l.deviceId) ?? false)
+                                  ),
                                 });
                               }}
                             >
@@ -430,6 +450,7 @@ export function FileTable({ files, totalCount, deviceNames, connectedDeviceIds, 
         <DeleteAllCopiesModal
           fileName={confirmDeleteAll.fileName}
           locations={confirmDeleteAll.locations}
+          offline={confirmDeleteAll.offline}
           deviceNames={deviceNames}
           onConfirm={onBulkDelete}
           onClose={(deletedIds) => {

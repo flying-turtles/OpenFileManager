@@ -43,9 +43,10 @@ function SimilarThumb({ file, connectedDeviceIds }: {
   return <img className="similar-thumb-img" src={src} alt={file.representativeName} loading="lazy" />;
 }
 
-function DeleteSimilarModal({ files, nothingKept, onConfirm, onClose }: {
+function DeleteSimilarModal({ files, nothingKept, deviceNames, onConfirm, onClose }: {
   files: { file: SimilarFile; locationIds: number[]; skippedOffline: number }[];
   nothingKept: boolean;
+  deviceNames?: Record<string, string>;
   onConfirm: (locationIds: number[], onEvent: (e: BulkDeleteEvent) => void, permanent?: boolean) => Promise<BulkDeleteResult>;
   onClose: () => void;
 }) {
@@ -58,7 +59,9 @@ function DeleteSimilarModal({ files, nothingKept, onConfirm, onClose }: {
 
   const allIds = files.flatMap((f) => f.locationIds);
   const totalBytes = files.reduce((s, f) => s + f.file.fileSize * f.locationIds.length, 0);
-  const skippedOffline = files.reduce((s, f) => s + f.skippedOffline, 0);
+  const offlineLocations = files.flatMap(({ file, locationIds }) =>
+    file.locations.filter((l) => !locationIds.includes(l.id))
+  );
   const canDelete = !nothingKept || confirmText === "delete";
 
   const handleDelete = async () => {
@@ -134,24 +137,37 @@ function DeleteSimilarModal({ files, nothingKept, onConfirm, onClose }: {
                 deleted.
               </p>
             )}
-            {skippedOffline > 0 && (
-              <p className="text-muted-color text-sm" style={{ marginBottom: 8 }}>
-                {skippedOffline} cop{skippedOffline !== 1 ? "ies" : "y"} on disconnected drives will
-                be kept.
-              </p>
-            )}
             <div className="bulk-delete-file-list">
               {files.map(({ file, locationIds }) =>
                 file.locations
                   .filter((l) => locationIds.includes(l.id))
                   .map((l) => (
                     <div key={l.id} className="bulk-delete-file-item">
-                      <span className="bulk-delete-file-path">{l.filePath}</span>
+                      <span className="bulk-delete-file-path">
+                        [{deviceNames?.[l.deviceId] ?? l.deviceId.slice(0, 8)}] {l.filePath}
+                      </span>
                       <span className="text-muted-color text-xs">{formatBytes(file.fileSize)}</span>
                     </div>
                   ))
               )}
             </div>
+            {offlineLocations.length > 0 && (
+              <>
+                <p className="text-muted-color text-sm" style={{ marginTop: 12, marginBottom: 4 }}>
+                  Kept — drive not connected:
+                </p>
+                <div className="bulk-delete-file-list offline-kept-list">
+                  {offlineLocations.map((l) => (
+                    <div key={l.id} className="bulk-delete-file-item">
+                      <span className="bulk-delete-file-path">
+                        [{deviceNames?.[l.deviceId] ?? l.deviceId.slice(0, 8)}] {l.filePath}
+                      </span>
+                      <span className="text-muted-color text-xs">offline</span>
+                    </div>
+                  ))}
+                </div>
+              </>
+            )}
             <PermanentToggle permanent={permanent} onChange={setPermanent} disabled={deleting} />
             {nothingKept && (
               <div className="form-group" style={{ marginTop: 16 }}>
@@ -200,6 +216,12 @@ export function Similar() {
     () => new Set(devices.filter((d) => d.isConnected).map((d) => d.id)),
     [devices]
   );
+
+  const deviceNames = useMemo(() => {
+    const map: Record<string, string> = {};
+    for (const d of devices) map[d.id] = d.label;
+    return map;
+  }, [devices]);
 
   const keepersFor = (groupIdx: number, group: SimilarGroup): string[] =>
     keepers[groupIdx] ?? [group.files[0].blake3Hash];
@@ -441,6 +463,7 @@ export function Similar() {
         <DeleteSimilarModal
           files={deletionPlan(deleteTarget, groups[deleteTarget])}
           nothingKept={keepersFor(deleteTarget, groups[deleteTarget]).length === 0}
+          deviceNames={deviceNames}
           onConfirm={deleteFiles}
           onClose={() => {
             setDeleteTarget(null);
@@ -454,6 +477,7 @@ export function Similar() {
         <DeleteSimilarModal
           files={[planFor(deleteFileTarget)]}
           nothingKept
+          deviceNames={deviceNames}
           onConfirm={deleteFiles}
           onClose={() => {
             setDeleteFileTarget(null);
