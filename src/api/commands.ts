@@ -320,11 +320,12 @@ export async function runDatabaseBackup(
 
 export async function scanSimilarPictures(
   onEvent: (event: SimilarScanEvent) => void,
-  deviceId?: string
+  deviceId?: string,
+  folder?: string
 ): Promise<void> {
   const channel = new Channel<SimilarScanEvent>();
   channel.onmessage = onEvent;
-  return invoke("scan_similar_pictures", { deviceId, onEvent: channel });
+  return invoke("scan_similar_pictures", { deviceId, folder, onEvent: channel });
 }
 
 export async function cancelSimilarScan(): Promise<void> {
@@ -333,9 +334,10 @@ export async function cancelSimilarScan(): Promise<void> {
 
 export async function getSimilarGroups(
   maxDistance?: number,
-  deviceId?: string
+  deviceId?: string,
+  folder?: string
 ): Promise<SimilarGroup[]> {
-  return invoke("get_similar_groups", { maxDistance, deviceId });
+  return invoke("get_similar_groups", { maxDistance, deviceId, folder });
 }
 
 export async function runDatabaseRestore(

@@ -164,6 +164,7 @@ export function Similar() {
   const { devices } = useDevices();
   const [maxDistance, setMaxDistance] = useState(5);
   const [deviceFilter, setDeviceFilter] = useState("");
+  const [folder, setFolder] = useState("");
   // keepers per group: blake3 hashes of the files to keep (multi-select)
   const [keepers, setKeepers] = useState<Record<number, string[]>>({});
   const [deleteTarget, setDeleteTarget] = useState<number | null>(null);
@@ -204,13 +205,28 @@ export function Similar() {
   const handleDistanceChange = (v: number) => {
     setMaxDistance(v);
     setKeepers({});
-    if (phase === "ready") loadGroups(v, deviceFilter || undefined);
+    if (phase === "ready") loadGroups(v, deviceFilter || undefined, folder || undefined);
   };
 
   const handleDeviceChange = (id: string) => {
     setDeviceFilter(id);
     setKeepers({});
-    if (phase === "ready") loadGroups(maxDistance, id || undefined);
+    if (phase === "ready") loadGroups(maxDistance, id || undefined, folder || undefined);
+  };
+
+  const handlePickFolder = async () => {
+    const selected = await open({ directory: true, multiple: false });
+    if (typeof selected === "string" && selected) {
+      setFolder(selected);
+      setKeepers({});
+      if (phase === "ready") loadGroups(maxDistance, deviceFilter || undefined, selected);
+    }
+  };
+
+  const handleClearFolder = () => {
+    setFolder("");
+    setKeepers({});
+    if (phase === "ready") loadGroups(maxDistance, deviceFilter || undefined);
   };
 
   return (
@@ -236,24 +252,47 @@ export function Similar() {
             </button>
           ))}
         </div>
-        <select
-          value={deviceFilter}
-          onChange={(e) => handleDeviceChange(e.target.value)}
-          disabled={phase === "scanning" || phase === "loading"}
-        >
-          <option value="">All connected drives</option>
-          {devices.filter((d) => d.isConnected).map((d) => (
-            <option key={d.id} value={d.id}>
-              {d.label} ({d.mountPoint})
-            </option>
-          ))}
-        </select>
+        {!folder && (
+          <select
+            value={deviceFilter}
+            onChange={(e) => handleDeviceChange(e.target.value)}
+            disabled={phase === "scanning" || phase === "loading"}
+          >
+            <option value="">All connected drives</option>
+            {devices.filter((d) => d.isConnected).map((d) => (
+              <option key={d.id} value={d.id}>
+                {d.label} ({d.mountPoint})
+              </option>
+            ))}
+          </select>
+        )}
+        {folder ? (
+          <span className="folder-chip" title={folder}>
+            {folder}
+            <button
+              className="folder-chip-clear"
+              onClick={handleClearFolder}
+              disabled={phase === "scanning" || phase === "loading"}
+              aria-label="Clear folder filter"
+            >
+              ×
+            </button>
+          </span>
+        ) : (
+          <button
+            onClick={handlePickFolder}
+            disabled={phase === "scanning" || phase === "loading"}
+            title="Limit to one folder (subfolders included)"
+          >
+            Folder...
+          </button>
+        )}
         {phase === "scanning" ? (
           <button className="btn-danger" onClick={cancel}>Cancel</button>
         ) : (
           <button
             className="btn-primary"
-            onClick={() => scan(maxDistance, deviceFilter || undefined)}
+            onClick={() => scan(maxDistance, deviceFilter || undefined, folder || undefined)}
             disabled={phase === "loading"}
           >
             {phase === "ready" ? "Rescan" : "Find Similar Media"}

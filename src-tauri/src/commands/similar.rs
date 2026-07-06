@@ -83,6 +83,7 @@ pub async fn scan_similar_pictures(
     app: tauri::AppHandle,
     state: State<'_, AppState>,
     device_id: Option<String>,
+    folder: Option<String>,
     on_event: Channel<SimilarScanEvent>,
 ) -> Result<(), AppError> {
     let token = CancellationToken::new();
@@ -94,7 +95,7 @@ pub async fn scan_similar_pictures(
         *guard = Some(token.clone());
     }
 
-    let result = run_similarity_scan(&app, &state, device_id, &on_event, &token).await;
+    let result = run_similarity_scan(&app, &state, device_id, folder, &on_event, &token).await;
 
     *state.similar_cancel_token.lock().await = None;
 
@@ -106,25 +107,64 @@ pub async fn scan_similar_pictures(
     result
 }
 
+/// Map an absolute folder path to (device_id, relative prefix) using the
+/// longest matching connected mount point. Empty prefix = whole device.
+fn resolve_folder(
+    folder: &str,
+    mounts: &HashMap<String, String>,
+) -> Result<(String, Option<String>), AppError> {
+    let folder_path = Path::new(folder);
+    let mut best: Option<(&String, &String)> = None;
+    for (id, mp) in mounts {
+        if folder_path.starts_with(mp) && best.map_or(true, |(_, bmp)| mp.len() > bmp.len()) {
+            best = Some((id, mp));
+        }
+    }
+    let (id, mp) = best.ok_or_else(|| {
+        AppError::General("Folder is not on any connected indexed drive".into())
+    })?;
+    let rel = folder_path
+        .strip_prefix(mp)
+        .unwrap_or_else(|_| Path::new(""))
+        .to_string_lossy()
+        .trim_matches('/')
+        .to_string();
+    Ok((id.clone(), if rel.is_empty() { None } else { Some(rel) }))
+}
+
 async fn run_similarity_scan(
     app: &tauri::AppHandle,
     state: &State<'_, AppState>,
     device_id: Option<String>,
+    folder: Option<String>,
     channel: &Channel<SimilarScanEvent>,
     token: &CancellationToken,
 ) -> Result<(), AppError> {
     // Connected devices = mount point currently exists; optionally one device only
     let devices = db::get_all_devices(&state.pool).await?;
-    let mounts: HashMap<String, String> = devices
+    let mut mounts: HashMap<String, String> = devices
         .into_iter()
         .filter(|d| Path::new(&d.mount_point).exists())
         .filter(|d| device_id.as_ref().map_or(true, |id| &d.id == id))
         .map(|d| (d.id, d.mount_point))
         .collect();
+
+    // A folder narrows the scan to one device + path prefix (subfolders included)
+    let mut path_prefix: Option<String> = None;
+    if let Some(folder) = &folder {
+        let (dev, prefix) = resolve_folder(folder, &mounts)?;
+        mounts.retain(|id, _| id == &dev);
+        path_prefix = prefix;
+    }
     let connected_ids: Vec<String> = mounts.keys().cloned().collect();
 
-    let todo =
-        db::get_unhashed_images(&state.pool, &connected_ids, &similarity::all_image_exts()).await?;
+    let todo = db::get_unhashed_images(
+        &state.pool,
+        &connected_ids,
+        &similarity::all_image_exts(),
+        path_prefix.as_deref(),
+    )
+    .await?;
     let total = todo.len() as u64;
     let _ = channel.send(SimilarScanEvent::Started { total });
 
@@ -191,7 +231,23 @@ pub async fn get_similar_groups(
     state: State<'_, AppState>,
     max_distance: Option<u32>,
     device_id: Option<String>,
+    folder: Option<String>,
 ) -> Result<Vec<SimilarGroup>, AppError> {
+    // A folder narrows the scope to one device + path prefix
+    let mut scope_device = device_id;
+    let mut scope_prefix: Option<String> = None;
+    if let Some(folder) = &folder {
+        let devices = db::get_all_devices(&state.pool).await?;
+        let mounts: HashMap<String, String> = devices
+            .into_iter()
+            .filter(|d| Path::new(&d.mount_point).exists())
+            .map(|d| (d.id, d.mount_point))
+            .collect();
+        let (dev, prefix) = resolve_folder(folder, &mounts)?;
+        scope_device = Some(dev);
+        scope_prefix = prefix;
+    }
+
     let rows = db::get_image_hashes(&state.pool).await?;
     let hashes: Vec<u64> = rows.iter().map(|(_, d, _, _)| *d as u64).collect();
 
@@ -213,14 +269,19 @@ pub async fn get_similar_groups(
                 locations,
             });
         }
-        // With a device filter, only show groups that touch that device;
-        // the whole group stays visible for context.
-        let on_device = device_id.as_ref().map_or(true, |id| {
-            files
-                .iter()
-                .any(|f| f.locations.iter().any(|l| &l.device_id == id))
+        // With a device/folder filter, only show groups that touch that
+        // scope; the whole group stays visible for context.
+        let in_scope = scope_device.as_ref().map_or(true, |id| {
+            files.iter().any(|f| {
+                f.locations.iter().any(|l| {
+                    &l.device_id == id
+                        && scope_prefix.as_ref().map_or(true, |p| {
+                            l.file_path == *p || l.file_path.starts_with(&format!("{}/", p))
+                        })
+                })
+            })
         });
-        if files.len() > 1 && on_device {
+        if files.len() > 1 && in_scope {
             // Biggest file first — usually the highest-quality candidate to keep
             files.sort_by(|a, b| b.file_size.cmp(&a.file_size));
             groups.push(SimilarGroup { files });

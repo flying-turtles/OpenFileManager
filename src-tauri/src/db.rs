@@ -1228,12 +1228,18 @@ pub async fn get_unhashed_images(
     pool: &DbPool,
     connected_ids: &[String],
     extensions: &[&str],
+    path_prefix: Option<&str>,
 ) -> Result<Vec<(String, String, String)>, AppError> {
     if connected_ids.is_empty() {
         return Ok(Vec::new());
     }
     let dev_ph: String = connected_ids.iter().map(|_| "?").collect::<Vec<_>>().join(",");
     let ext_ph: String = extensions.iter().map(|_| "?").collect::<Vec<_>>().join(",");
+    let prefix_clause = if path_prefix.is_some() {
+        " AND fl.file_path LIKE ? ESCAPE '\\'"
+    } else {
+        ""
+    };
     let sql = format!(
         "SELECT fl.blake3_hash, fl.device_id, fl.file_path
          FROM file_locations fl
@@ -1241,9 +1247,9 @@ pub async fn get_unhashed_images(
          LEFT JOIN image_hashes ih ON ih.blake3_hash = fl.blake3_hash
          WHERE ih.blake3_hash IS NULL
            AND f.extension IN ({})
-           AND fl.device_id IN ({})
+           AND fl.device_id IN ({}){}
          GROUP BY fl.blake3_hash",
-        ext_ph, dev_ph
+        ext_ph, dev_ph, prefix_clause
     );
     let mut query = sqlx::query_as::<_, (String, String, String)>(&sql);
     for ext in extensions {
@@ -1251,6 +1257,13 @@ pub async fn get_unhashed_images(
     }
     for id in connected_ids {
         query = query.bind(id);
+    }
+    if let Some(prefix) = path_prefix {
+        let escaped = prefix
+            .replace('\\', "\\\\")
+            .replace('%', "\\%")
+            .replace('_', "\\_");
+        query = query.bind(format!("{}/%", escaped));
     }
     Ok(query.fetch_all(pool).await?)
 }
