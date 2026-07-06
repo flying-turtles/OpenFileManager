@@ -67,12 +67,21 @@ pub async fn mount_network_drive(state: State<'_, AppState>, drive_id: String) -
 
     match drive.protocol.as_str() {
         "smb" => {
-            let password = if !drive.username.is_empty() {
-                network::keychain_load(&drive_id, &drive.username).unwrap_or_default()
+            // Adopt a mount that already exists (manual mount_smbfs, Finder)
+            // instead of failing with "File exists"
+            if let Some(existing) = network::find_existing_smb_mount(&drive.host, &drive.share_path) {
+                if existing != drive.mount_point {
+                    db::update_network_drive_mount_point(&state.pool, &drive_id, &existing).await?;
+                    drive.mount_point = existing;
+                }
             } else {
-                String::new()
-            };
-            network::mount_smb(&drive.host, &drive.share_path, &drive.username, &password, &drive.mount_point)?;
+                let password = if !drive.username.is_empty() {
+                    network::keychain_load(&drive_id, &drive.username).unwrap_or_default()
+                } else {
+                    String::new()
+                };
+                network::mount_smb(&drive.host, &drive.share_path, &drive.username, &password, &drive.mount_point)?;
+            }
         }
         "nfs" => {
             network::mount_nfs(&drive.host, &drive.share_path, &drive.mount_point)?;

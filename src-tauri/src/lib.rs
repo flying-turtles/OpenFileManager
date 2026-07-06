@@ -166,6 +166,14 @@ async fn auto_mount_network_drives(
             drive.mount_point = new_mount;
         }
 
+        // Adopt a mount that already exists elsewhere (manual/Finder mount)
+        if drive.protocol == "smb" && !network::is_mountpoint(&drive.mount_point) {
+            if let Some(existing) = network::find_existing_smb_mount(&drive.host, &drive.share_path) {
+                db::update_network_drive_mount_point(pool, &drive.id, &existing).await?;
+                drive.mount_point = existing;
+            }
+        }
+
         let already_mounted = network::is_mountpoint(&drive.mount_point);
 
         if !already_mounted {

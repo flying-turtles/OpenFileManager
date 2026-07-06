@@ -100,11 +100,37 @@ pub fn mount_smb(
         .output()?;
 
     if !output.status.success() {
-        return Err(AppError::General(
-            String::from_utf8_lossy(&output.stderr).to_string(),
-        ));
+        let mut msg = String::from_utf8_lossy(&output.stderr).to_string();
+        // Never echo credentials back in error messages
+        if !password.is_empty() {
+            msg = msg.replace(password, "***");
+        }
+        return Err(AppError::General(msg));
     }
     Ok(())
+}
+
+/// If this share is already mounted anywhere (e.g. mounted manually or via
+/// Finder), return its current mount point — mount_smbfs refuses duplicate
+/// mounts of the same share with "File exists".
+pub fn find_existing_smb_mount(host: &str, share: &str) -> Option<String> {
+    let output = Command::new("mount").output().ok()?;
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let needle = format!("@{}/{} on ", host, share).to_lowercase();
+    for line in stdout.lines() {
+        if !line.starts_with("//") {
+            continue;
+        }
+        let lower = line.to_lowercase();
+        if let Some(idx) = lower.find(&needle) {
+            let rest = &line[idx + needle.len()..];
+            let mp = rest.split(" (").next()?.trim();
+            if !mp.is_empty() {
+                return Some(mp.to_string());
+            }
+        }
+    }
+    None
 }
 
 pub fn mount_nfs(host: &str, export_path: &str, mount_point: &str) -> Result<(), AppError> {
