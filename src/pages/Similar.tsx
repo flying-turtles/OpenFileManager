@@ -42,8 +42,9 @@ function SimilarThumb({ file, connectedDeviceIds }: {
   return <img className="similar-thumb-img" src={src} alt={file.representativeName} loading="lazy" />;
 }
 
-function DeleteSimilarModal({ files, onConfirm, onClose }: {
+function DeleteSimilarModal({ files, nothingKept, onConfirm, onClose }: {
   files: { file: SimilarFile; locationIds: number[]; skippedOffline: number }[];
+  nothingKept: boolean;
   onConfirm: (locationIds: number[], onEvent: (e: BulkDeleteEvent) => void) => Promise<BulkDeleteResult>;
   onClose: () => void;
 }) {
@@ -51,10 +52,12 @@ function DeleteSimilarModal({ files, onConfirm, onClose }: {
   const [deleting, setDeleting] = useState(false);
   const [result, setResult] = useState<BulkDeleteResult | null>(null);
   const [processed, setProcessed] = useState(0);
+  const [confirmText, setConfirmText] = useState("");
 
   const allIds = files.flatMap((f) => f.locationIds);
   const totalBytes = files.reduce((s, f) => s + f.file.fileSize * f.locationIds.length, 0);
   const skippedOffline = files.reduce((s, f) => s + f.skippedOffline, 0);
+  const canDelete = !nothingKept || confirmText === "delete";
 
   const handleDelete = async () => {
     setDeleting(true);
@@ -118,11 +121,17 @@ function DeleteSimilarModal({ files, onConfirm, onClose }: {
           </>
         ) : (
           <>
-            <h2>Delete similar pictures?</h2>
+            <h2>{nothingKept ? "Delete ALL copies?" : "Delete similar pictures?"}</h2>
             <p className="bulk-delete-warning">
               {allIds.length} file cop{allIds.length !== 1 ? "ies" : "y"} (
               {formatBytes(totalBytes)}) will be moved to the Trash.
             </p>
+            {nothingKept && (
+              <p className="bulk-delete-warning">
+                Nothing is marked as Keep — every copy of these files on connected drives will be
+                deleted.
+              </p>
+            )}
             {skippedOffline > 0 && (
               <p className="text-muted-color text-sm" style={{ marginBottom: 8 }}>
                 {skippedOffline} cop{skippedOffline !== 1 ? "ies" : "y"} on disconnected drives will
@@ -141,10 +150,22 @@ function DeleteSimilarModal({ files, onConfirm, onClose }: {
                   ))
               )}
             </div>
+            {nothingKept && (
+              <div className="form-group" style={{ marginTop: 16 }}>
+                <label>Type "<strong>delete</strong>" to confirm</label>
+                <input
+                  type="text"
+                  value={confirmText}
+                  onChange={(e) => setConfirmText(e.target.value)}
+                  placeholder="delete"
+                  autoFocus
+                />
+              </div>
+            )}
             <div className="form-actions">
               <button onClick={onClose}>Cancel</button>
-              <button className="btn-danger" onClick={handleDelete}>
-                Delete ({allIds.length})
+              <button className="btn-danger" onClick={handleDelete} disabled={!canDelete}>
+                {nothingKept ? `Delete all copies (${allIds.length})` : `Delete (${allIds.length})`}
               </button>
             </div>
           </>
@@ -338,11 +359,17 @@ export function Similar() {
                 </span>
                 <button
                   className="btn-danger"
-                  disabled={deletableCount === 0 || keeperSet.size === 0}
-                  title={keeperSet.size === 0 ? "Select at least one picture to keep" : undefined}
+                  disabled={deletableCount === 0}
+                  title={
+                    keeperSet.size === 0
+                      ? "Nothing kept — deletes every copy of these files"
+                      : undefined
+                  }
                   onClick={() => setDeleteTarget(gi)}
                 >
-                  Keep selected, delete rest ({deletableCount})
+                  {keeperSet.size === 0
+                    ? `Delete all copies (${deletableCount})`
+                    : `Keep selected, delete rest (${deletableCount})`}
                 </button>
               </div>
               <div className="similar-grid">
@@ -391,6 +418,7 @@ export function Similar() {
       {deleteTarget !== null && groups[deleteTarget] && (
         <DeleteSimilarModal
           files={deletionPlan(deleteTarget, groups[deleteTarget])}
+          nothingKept={keepersFor(deleteTarget, groups[deleteTarget]).length === 0}
           onConfirm={deleteFiles}
           onClose={() => {
             setDeleteTarget(null);
