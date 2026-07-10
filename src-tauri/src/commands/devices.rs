@@ -23,6 +23,11 @@ pub async fn detect_devices(state: State<'_, AppState>) -> Result<Vec<StorageDev
         for (fmid, current_mount) in devices::scan_volumes_for_filemanager_ids() {
             if let Some(existing) = all_devs.iter().find(|d| d.id == fmid) {
                 if existing.mount_point != current_mount {
+                    // Stored path still reachable → user's (possibly manual) mapping wins;
+                    // only auto-heal devices whose current path is gone
+                    if super::path_online(&existing.mount_point).await {
+                        continue;
+                    }
                     let (_, avail) = devices::disk_space_for_path(&current_mount);
                     let updated = DetectedDisk {
                         id: fmid,

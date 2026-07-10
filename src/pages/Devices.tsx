@@ -78,6 +78,12 @@ export function Devices({ onScanDevice }: Props) {
     grouped.get(key)!.push(d);
   }
 
+  // Network drives get their own storage_devices row; they have their own
+  // mount logic, so hide the manual Reconnect button on their cards.
+  const networkBacked = new Set(
+    network.drives.flatMap((d) => [d.id, d.mountPoint])
+  );
+
   return (
     <div className="page">
       <div className="page-header">
@@ -200,7 +206,11 @@ export function Devices({ onScanDevice }: Props) {
                   onVerify={(dev) => verify.verify(dev.id, dev.label)}
                   verifyDisabled={verify.phase === "running"}
                   onRemove={handleRemove}
-                  onReconnect={handleReconnect}
+                  onReconnect={
+                    networkBacked.has(d.id) || networkBacked.has(d.mountPoint)
+                      ? undefined
+                      : handleReconnect
+                  }
                 />
               ))}
             </div>
