@@ -26,6 +26,7 @@ import type {
   SimilarGroup,
   SimilarScanEvent,
   VerifyEvent,
+  ReconnectCheck,
 } from "../types";
 
 export async function detectDevices(): Promise<StorageDevice[]> {
@@ -55,6 +56,20 @@ export async function setDriveSpeed(
 
 export async function removeDevice(deviceId: string): Promise<void> {
   return invoke("remove_device", { deviceId });
+}
+
+export async function checkReconnectTarget(
+  deviceId: string,
+  newPath: string
+): Promise<ReconnectCheck> {
+  return invoke("check_reconnect_target", { deviceId, newPath });
+}
+
+export async function reconnectDevice(
+  deviceId: string,
+  newPath: string
+): Promise<StorageDevice> {
+  return invoke("reconnect_device", { deviceId, newPath });
 }
 
 export async function startScan(

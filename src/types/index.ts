@@ -281,3 +281,10 @@ export type VerifyEvent =
   | { Finished: { verified: number; baselined: number; modified: number; corrupted: number; missing: number } }
   | { Error: { message: string } }
   | "Cancelled";
+
+export interface ReconnectCheck {
+  markerStatus: "match" | "mismatch" | "missing";
+  foreignId: string | null;
+  foundFiles: number;
+  sampledFiles: number;
+}
