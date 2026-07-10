@@ -192,6 +192,9 @@ pub async fn reconnect_device(
     }
 
     let all = db::get_all_devices(&state.pool).await?;
+    if !all.iter().any(|d| d.id == device_id) {
+        return Err(AppError::General(format!("Unknown device: {}", device_id)));
+    }
     if let Some(other) = all
         .iter()
         .find(|d| d.id != device_id && d.mount_point == new_path)
@@ -205,9 +208,19 @@ pub async fn reconnect_device(
     // Marker belonging to a DIFFERENT registered device → hard reject
     let marker_path = std::path::Path::new(&new_path).join(devices::FILEMANAGER_ID_FILE);
     let mp = marker_path.clone();
-    let marker = tokio::task::spawn_blocking(move || std::fs::read_to_string(mp).ok())
+    let marker_result = tokio::task::spawn_blocking(move || std::fs::read_to_string(mp))
         .await
-        .unwrap_or(None);
+        .map_err(|e| AppError::General(e.to_string()))?;
+    let marker = match marker_result {
+        Ok(contents) => Some(contents),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => None,
+        Err(e) => {
+            return Err(AppError::General(format!(
+                "Could not read id marker at {}: {}",
+                new_path, e
+            )))
+        }
+    };
     if let Some(m) = marker.map(|s| s.trim().to_string()) {
         if !m.is_empty() && m != device_id {
             if let Some(other) = all.iter().find(|d| d.id == m) {
