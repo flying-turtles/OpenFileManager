@@ -411,3 +411,12 @@ pub enum VerifyEvent {
     Error { message: String },
     Cancelled,
 }
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ReconnectCheck {
+    pub marker_status: String, // "match" | "mismatch" | "missing"
+    pub foreign_id: Option<String>,
+    pub found_files: i64,
+    pub sampled_files: i64,
+}

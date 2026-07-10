@@ -185,3 +185,43 @@ pub fn device_for_path(devices: &[DetectedDisk], path: &str) -> Option<(String, 
     best_match.map(|(dev, _)| (dev.id.clone(), dev.mount_point.clone()))
 }
 
+/// Classify a `.filemanagerid` marker read from a reconnect target.
+/// Returns ("match" | "mismatch" | "missing", foreign_id_if_mismatch).
+pub fn evaluate_marker(contents: Option<&str>, device_id: &str) -> (String, Option<String>) {
+    match contents.map(|c| c.trim().to_string()) {
+        Some(id) if id.is_empty() => ("missing".into(), None),
+        Some(id) if id == device_id => ("match".into(), None),
+        Some(id) => ("mismatch".into(), Some(id)),
+        None => ("missing".into(), None),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn marker_match() {
+        assert_eq!(
+            evaluate_marker(Some("dev-1\n"), "dev-1"),
+            ("match".to_string(), None)
+        );
+    }
+
+    #[test]
+    fn marker_mismatch_reports_foreign_id() {
+        assert_eq!(
+            evaluate_marker(Some("other-id"), "dev-1"),
+            ("mismatch".to_string(), Some("other-id".to_string()))
+        );
+    }
+
+    #[test]
+    fn marker_missing_or_empty() {
+        assert_eq!(evaluate_marker(None, "dev-1"), ("missing".to_string(), None));
+        assert_eq!(
+            evaluate_marker(Some("   \n"), "dev-1"),
+            ("missing".to_string(), None)
+        );
+    }
+}
