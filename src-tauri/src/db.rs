@@ -700,6 +700,19 @@ pub async fn remove_stale_locations(
     Ok(total_deleted)
 }
 
+pub async fn delete_location_by_device_and_path(
+    pool: &DbPool,
+    device_id: &str,
+    file_path: &str,
+) -> Result<(), AppError> {
+    sqlx::query("DELETE FROM file_locations WHERE device_id = ? AND file_path = ?")
+        .bind(device_id)
+        .bind(file_path)
+        .execute(pool)
+        .await?;
+    Ok(())
+}
+
 pub async fn cleanup_orphaned_files(pool: &DbPool) -> Result<u64, AppError> {
     let res = sqlx::query(
         "DELETE FROM files WHERE blake3_hash NOT IN (SELECT DISTINCT blake3_hash FROM file_locations)"

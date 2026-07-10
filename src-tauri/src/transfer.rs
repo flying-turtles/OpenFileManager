@@ -299,7 +299,20 @@ pub async fn run_transfer(
             continue;
         }
 
-        let _ = writer.flush().await;
+        // sync_all forces the SMB server to acknowledge the write — silently
+        // ignoring finalize errors leaves DB rows for files that never landed
+        if let Err(e) = async {
+            writer.flush().await?;
+            writer.sync_all().await
+        }
+        .await
+        {
+            let _ = channel.send(TransferEvent::Error {
+                message: format!("Finalize {} failed: {}", dest_path.display(), e),
+            });
+            let _ = tokio::fs::remove_file(&dest_path).await;
+            continue;
+        }
 
         files_copied += 1;
         bytes_copied += file.file_size;

@@ -305,6 +305,52 @@ pub enum ImportEvent {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct SourceCleanupFile {
+    pub source_path: String,
+    pub relative_path: String,
+    pub file_name: String,
+    pub file_size: i64,
+    pub backup_device_ids: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SourceCleanupPreview {
+    pub sd_device_id: String,
+    pub sd_label: String,
+    pub files: Vec<SourceCleanupFile>,
+    pub total_bytes: i64,
+    pub skipped_count: u64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SourceCleanupError {
+    pub source_path: String,
+    pub error: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SourceCleanupResult {
+    pub deleted: u64,
+    pub bytes_freed: i64,
+    pub failed: Vec<SourceCleanupError>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum SourceCleanupEvent {
+    #[serde(rename_all = "camelCase")]
+    Progress {
+        processed: u64,
+        total: u64,
+        current_file: String,
+    },
+    Complete(SourceCleanupResult),
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct BackupSettings {
     pub host: String,
     pub port: i64,

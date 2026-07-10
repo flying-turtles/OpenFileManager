@@ -174,6 +174,52 @@ pub async fn analyze_sd_card(
     })
 }
 
+/// Files from the analysis that are safe to remove from the source device:
+/// copies exist on at least two distinct devices other than the source,
+/// checked against the current DB state (so imports just made count too).
+pub async fn compute_source_cleanup(
+    pool: &DbPool,
+    analysis: &ImportAnalysis,
+) -> Result<SourceCleanupPreview, AppError> {
+    let hashes: Vec<String> = analysis.files.iter().map(|f| f.blake3_hash.clone()).collect();
+    let locations_map = db::get_locations_for_hashes(pool, &hashes).await?;
+
+    let mut files = Vec::new();
+    let mut total_bytes: i64 = 0;
+    let mut skipped_count: u64 = 0;
+
+    for f in &analysis.files {
+        let mut backup_device_ids: Vec<String> = locations_map
+            .get(&f.blake3_hash)
+            .map(|locs| locs.iter().map(|l| l.device_id.clone()).collect())
+            .unwrap_or_default();
+        backup_device_ids.sort();
+        backup_device_ids.dedup();
+        backup_device_ids.retain(|d| *d != analysis.sd_device_id);
+
+        if backup_device_ids.len() >= 2 {
+            total_bytes += f.file_size;
+            files.push(SourceCleanupFile {
+                source_path: f.source_path.clone(),
+                relative_path: f.relative_path.clone(),
+                file_name: f.file_name.clone(),
+                file_size: f.file_size,
+                backup_device_ids,
+            });
+        } else {
+            skipped_count += 1;
+        }
+    }
+
+    Ok(SourceCleanupPreview {
+        sd_device_id: analysis.sd_device_id.clone(),
+        sd_label: analysis.sd_label.clone(),
+        files,
+        total_bytes,
+        skipped_count,
+    })
+}
+
 pub async fn run_import(
     pool: DbPool,
     analysis: Arc<ImportAnalysis>,

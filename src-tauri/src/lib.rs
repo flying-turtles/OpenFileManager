@@ -119,6 +119,8 @@ pub fn run() {
             commands::analyze_sd_card,
             commands::start_import,
             commands::cancel_import,
+            commands::get_import_cleanup_preview,
+            commands::delete_imported_source_files,
             commands::eject_device,
             commands::create_project,
             commands::get_projects,

@@ -88,6 +88,101 @@ pub async fn start_import(
 }
 
 #[tauri::command]
+pub async fn get_import_cleanup_preview(
+    state: State<'_, AppState>,
+) -> Result<SourceCleanupPreview, AppError> {
+    let analysis = {
+        let guard = state.import_analysis.lock().await;
+        guard
+            .clone()
+            .ok_or_else(|| AppError::General("No analysis available. Run analyze first.".into()))?
+    };
+    crate::importer::compute_source_cleanup(&state.pool, &analysis).await
+}
+
+#[tauri::command]
+pub async fn delete_imported_source_files(
+    state: State<'_, AppState>,
+    permanent: Option<bool>,
+    on_event: Channel<SourceCleanupEvent>,
+) -> Result<SourceCleanupResult, AppError> {
+    let analysis = {
+        let guard = state.import_analysis.lock().await;
+        guard
+            .clone()
+            .ok_or_else(|| AppError::General("No analysis available. Run analyze first.".into()))?
+    };
+
+    // Recompute against current DB state so the delete list can't drift from
+    // what the preview promised (e.g. copies made or removed since).
+    let preview = crate::importer::compute_source_cleanup(&state.pool, &analysis).await?;
+    let permanent = permanent.unwrap_or(false);
+
+    if let Some(first) = preview.files.first() {
+        if !super::path_online_within(&first.source_path, 5).await {
+            return Err(AppError::General(format!(
+                "{} is not reachable — reconnect it and try again",
+                preview.sd_label
+            )));
+        }
+    }
+
+    // DB file_paths are relative to the device mount point, while the
+    // analysis paths are relative to the (possibly narrowed) analyze folder.
+    let sd_mount = crate::db::get_device(&state.pool, &preview.sd_device_id)
+        .await
+        .ok()
+        .map(|d| d.mount_point);
+
+    let total = preview.files.len() as u64;
+    let mut deleted: u64 = 0;
+    let mut bytes_freed: i64 = 0;
+    let mut failed = Vec::new();
+
+    for (i, f) in preview.files.iter().enumerate() {
+        let _ = on_event.send(SourceCleanupEvent::Progress {
+            processed: i as u64,
+            total,
+            current_file: f.file_name.clone(),
+        });
+
+        match super::files::remove_from_disk(PathBuf::from(&f.source_path), permanent).await {
+            Ok(()) => {
+                deleted += 1;
+                bytes_freed += f.file_size;
+                // Drop any tracked location of this file on the source device
+                if let Some(mp) = &sd_mount {
+                    if let Ok(rel) = std::path::Path::new(&f.source_path).strip_prefix(mp) {
+                        let _ = crate::db::delete_location_by_device_and_path(
+                            &state.pool,
+                            &preview.sd_device_id,
+                            &rel.to_string_lossy(),
+                        )
+                        .await;
+                    }
+                }
+            }
+            Err(e) => failed.push(SourceCleanupError {
+                source_path: f.source_path.clone(),
+                error: e.to_string(),
+            }),
+        }
+    }
+
+    if deleted > 0 {
+        let _ = crate::db::cleanup_orphaned_files(&state.pool).await;
+    }
+
+    let result = SourceCleanupResult {
+        deleted,
+        bytes_freed,
+        failed,
+    };
+    let _ = on_event.send(SourceCleanupEvent::Complete(result.clone()));
+    Ok(result)
+}
+
+#[tauri::command]
 pub async fn cancel_import(state: State<'_, AppState>) -> Result<(), AppError> {
     let guard = state.import_cancel_token.lock().await;
     if let Some(token) = guard.as_ref() {

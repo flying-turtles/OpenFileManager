@@ -209,6 +209,37 @@ export type ImportEvent =
   | "Cancelled"
   | { Paused: { processed: number; total: number } };
 
+export interface SourceCleanupFile {
+  sourcePath: string;
+  relativePath: string;
+  fileName: string;
+  fileSize: number;
+  backupDeviceIds: string[];
+}
+
+export interface SourceCleanupPreview {
+  sdDeviceId: string;
+  sdLabel: string;
+  files: SourceCleanupFile[];
+  totalBytes: number;
+  skippedCount: number;
+}
+
+export interface SourceCleanupError {
+  sourcePath: string;
+  error: string;
+}
+
+export interface SourceCleanupResult {
+  deleted: number;
+  bytesFreed: number;
+  failed: SourceCleanupError[];
+}
+
+export type SourceCleanupEvent =
+  | { Progress: { processed: number; total: number; currentFile: string } }
+  | { Complete: SourceCleanupResult };
+
 export interface BackupSettings {
   host: string;
   port: number;

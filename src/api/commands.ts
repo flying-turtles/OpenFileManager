@@ -8,6 +8,9 @@ import type {
   DirEntry,
   ScanEvent,
   ImportEvent,
+  SourceCleanupPreview,
+  SourceCleanupResult,
+  SourceCleanupEvent,
   TransferCheck,
   TransferEvent,
   Project,
@@ -180,6 +183,19 @@ export async function startImport(
 
 export async function cancelImport(): Promise<void> {
   return invoke("cancel_import");
+}
+
+export async function getImportCleanupPreview(): Promise<SourceCleanupPreview> {
+  return invoke("get_import_cleanup_preview");
+}
+
+export async function deleteImportedSourceFiles(
+  permanent: boolean,
+  onEvent: (event: SourceCleanupEvent) => void
+): Promise<SourceCleanupResult> {
+  const channel = new Channel<SourceCleanupEvent>();
+  channel.onmessage = onEvent;
+  return invoke("delete_imported_source_files", { permanent, onEvent: channel });
 }
 
 export async function ejectDevice(mountPoint: string): Promise<void> {

@@ -28,7 +28,7 @@ pub async fn check_project_transfer(
     let mut connected_devices: HashMap<String, StorageDevice> = HashMap::new();
     for mut dev in all_devices {
         let is_connected =
-            volume_ids.contains(&dev.id) || std::path::Path::new(&dev.mount_point).exists();
+            volume_ids.contains(&dev.id) || super::path_online(&dev.mount_point).await;
         if is_connected {
             dev.is_connected = true;
             if let Some(vol) = volumes.iter().find(|v| v.id == dev.id) {
@@ -71,11 +71,18 @@ pub async fn start_project_transfer(
     let pool = state.pool.clone();
     let cancel_token = CancellationToken::new();
 
+    // Refuse a second concurrent transfer: overlapping runs re-copy the same
+    // files ("_1" duplicates) because the first run's rows aren't in the DB
+    // yet when the second resolves.
     {
         let mut guard = state.transfer_cancel_token.lock().await;
+        if guard.as_ref().map_or(false, |t| !t.is_cancelled()) {
+            return Err(AppError::General("A transfer is already running".into()));
+        }
         *guard = Some(cancel_token.clone());
     }
 
+    let token_slot = state.transfer_cancel_token.clone();
     tokio::spawn(async move {
         if let Err(e) = transfer::run_transfer(
             pool,
@@ -92,6 +99,7 @@ pub async fn start_project_transfer(
                 message: e.to_string(),
             });
         }
+        *token_slot.lock().await = None;
     });
 
     Ok(())

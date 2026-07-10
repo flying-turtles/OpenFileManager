@@ -3,6 +3,7 @@ import { open } from "@tauri-apps/plugin-dialog";
 import { useImport } from "../hooks/useImport";
 import { useDevices } from "../hooks/useDevices";
 import { formatBytes } from "../utils/format";
+import { SourceCleanupModal } from "../components/SourceCleanupModal";
 import "./Import.css";
 
 export function Import() {
@@ -23,6 +24,18 @@ export function Import() {
   const [selectedSource, setSelectedSource] = useState("");
   const [sourcePath, setSourcePath] = useState("");
   const [selectedTargets, setSelectedTargets] = useState<string[]>([]);
+  const [showCleanup, setShowCleanup] = useState(false);
+  const [cleanupDidDelete, setCleanupDidDelete] = useState(false);
+
+  const closeCleanup = () => {
+    setShowCleanup(false);
+    // Deleting source files invalidates the analysis — force a re-analyze
+    // before any import can run against paths that no longer exist.
+    if (cleanupDidDelete && phase === "reviewed") {
+      setCleanupDidDelete(false);
+      reset();
+    }
+  };
 
   const removableDevices = devices.filter(
     (d) => d.isConnected && d.mountPoint !== "/"
@@ -245,6 +258,9 @@ export function Import() {
 
           <div className="import-actions">
             <button onClick={reset}>Back</button>
+            <button className="btn-danger" onClick={() => setShowCleanup(true)}>
+              Delete Backed-Up Files from {analysis.sdLabel}
+            </button>
             <button
               className="btn-primary"
               disabled={selectedTargets.length === 0}
@@ -397,6 +413,9 @@ export function Import() {
           </div>
 
           <div className="import-actions mt-16">
+            <button className="btn-danger" onClick={() => setShowCleanup(true)}>
+              Delete Backed-Up Files from {analysis.sdLabel}
+            </button>
             {sourceDevice?.isRemovable && sourceDevice.isConnected && (
               <button onClick={() => eject(sourceDevice.mountPoint)}>
                 Eject SD Card
@@ -417,6 +436,14 @@ export function Import() {
         </div>
         );
       })()}
+
+      {showCleanup && (
+        <SourceCleanupModal
+          deviceNames={deviceNames}
+          onDeleted={() => setCleanupDidDelete(true)}
+          onClose={closeCleanup}
+        />
+      )}
     </div>
   );
 }
