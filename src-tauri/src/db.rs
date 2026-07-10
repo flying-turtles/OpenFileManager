@@ -125,6 +125,42 @@ pub async fn delete_device(pool: &DbPool, device_id: &str) -> Result<(), AppErro
     Ok(())
 }
 
+/// Re-point a device at a new mount path. Resets total_bytes to 0 —
+/// totals are unreliable for manually-pointed paths (same as add_location).
+pub async fn update_device_mount_point(
+    pool: &DbPool,
+    device_id: &str,
+    mount_point: &str,
+    available_bytes: i64,
+) -> Result<(), AppError> {
+    sqlx::query(
+        "UPDATE storage_devices
+         SET mount_point = ?, total_bytes = 0, available_bytes = ?, last_seen = datetime('now')
+         WHERE id = ?",
+    )
+    .bind(mount_point)
+    .bind(available_bytes)
+    .bind(device_id)
+    .execute(pool)
+    .await?;
+    Ok(())
+}
+
+pub async fn get_device_file_sample(
+    pool: &DbPool,
+    device_id: &str,
+    limit: i64,
+) -> Result<Vec<FileLocation>, AppError> {
+    let rows = sqlx::query_as::<_, FileLocation>(
+        "SELECT * FROM file_locations WHERE device_id = ? ORDER BY id LIMIT ?",
+    )
+    .bind(device_id)
+    .bind(limit)
+    .fetch_all(pool)
+    .await?;
+    Ok(rows)
+}
+
 // --- File queries ---
 
 pub async fn upsert_file(pool: &DbPool, hash: &str, size: i64, name: &str, ext: &str) -> Result<(), AppError> {
@@ -1395,4 +1431,74 @@ pub async fn update_network_drive_mount_point(
         .execute(pool)
         .await?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::models::DetectedDisk;
+
+    async fn test_pool() -> DbPool {
+        let dir = std::env::temp_dir().join(format!("ofm-test-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let pool = init_pool(&dir.join("test.db")).await.unwrap();
+        run_migrations(&pool).await.unwrap();
+        pool
+    }
+
+    #[tokio::test]
+    async fn update_mount_point_updates_row() {
+        let pool = test_pool().await;
+        let disk = DetectedDisk {
+            id: "dev-1".into(),
+            label: "Test".into(),
+            mount_point: "/Volumes/Old".into(),
+            total_bytes: 100,
+            available_bytes: 50,
+            is_removable: false,
+        };
+        upsert_device(&pool, &disk).await.unwrap();
+
+        update_device_mount_point(&pool, "dev-1", "/Volumes/New", 42)
+            .await
+            .unwrap();
+
+        let dev = get_device(&pool, "dev-1").await.unwrap();
+        assert_eq!(dev.mount_point, "/Volumes/New");
+        assert_eq!(dev.available_bytes, 42);
+        assert_eq!(dev.total_bytes, 0); // manual re-point resets unreliable total
+    }
+
+    #[tokio::test]
+    async fn file_sample_limited() {
+        let pool = test_pool().await;
+        let disk = DetectedDisk {
+            id: "dev-1".into(),
+            label: "Test".into(),
+            mount_point: "/Volumes/Old".into(),
+            total_bytes: 0,
+            available_bytes: 0,
+            is_removable: false,
+        };
+        upsert_device(&pool, &disk).await.unwrap();
+        for i in 0..5 {
+            upsert_file(&pool, &format!("hash-{i}"), 10, "f", "jpg").await.unwrap();
+            upsert_location(
+                &pool,
+                &format!("hash-{i}"),
+                "dev-1",
+                &format!("sub/file-{i}.jpg"),
+                &format!("file-{i}.jpg"),
+                10,
+                Some("2026-01-01T00:00:00Z"),
+                "full",
+            )
+            .await
+            .unwrap();
+        }
+        let sample = get_device_file_sample(&pool, "dev-1", 3).await.unwrap();
+        assert_eq!(sample.len(), 3);
+        let all = get_device_file_sample(&pool, "dev-1", 20).await.unwrap();
+        assert_eq!(all.len(), 5);
+    }
 }
