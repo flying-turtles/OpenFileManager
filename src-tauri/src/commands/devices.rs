@@ -146,6 +146,98 @@ pub async fn add_location(
 }
 
 #[tauri::command]
+pub async fn check_reconnect_target(
+    state: State<'_, AppState>,
+    device_id: String,
+    new_path: String,
+) -> Result<ReconnectCheck, AppError> {
+    if !super::path_online_within(&new_path, 5).await {
+        return Err(AppError::General(format!("Path is not reachable: {}", new_path)));
+    }
+
+    let marker_path = std::path::Path::new(&new_path).join(devices::FILEMANAGER_ID_FILE);
+    let marker = tokio::task::spawn_blocking(move || std::fs::read_to_string(marker_path).ok())
+        .await
+        .unwrap_or(None);
+    let (marker_status, foreign_id) = devices::evaluate_marker(marker.as_deref(), &device_id);
+
+    let sample = db::get_device_file_sample(&state.pool, &device_id, 20).await?;
+    let sampled_files = sample.len() as i64;
+    let base = std::path::PathBuf::from(&new_path);
+    let found_files = tokio::task::spawn_blocking(move || {
+        sample
+            .iter()
+            .filter(|f| base.join(&f.file_path).is_file())
+            .count() as i64
+    })
+    .await
+    .unwrap_or(0);
+
+    Ok(ReconnectCheck {
+        marker_status,
+        foreign_id,
+        found_files,
+        sampled_files,
+    })
+}
+
+#[tauri::command]
+pub async fn reconnect_device(
+    state: State<'_, AppState>,
+    device_id: String,
+    new_path: String,
+) -> Result<StorageDevice, AppError> {
+    if !super::path_online_within(&new_path, 5).await {
+        return Err(AppError::General(format!("Path is not reachable: {}", new_path)));
+    }
+
+    let all = db::get_all_devices(&state.pool).await?;
+    if let Some(other) = all
+        .iter()
+        .find(|d| d.id != device_id && d.mount_point == new_path)
+    {
+        return Err(AppError::General(format!(
+            "Path is already used by device \"{}\"",
+            other.label
+        )));
+    }
+
+    // Marker belonging to a DIFFERENT registered device → hard reject
+    let marker_path = std::path::Path::new(&new_path).join(devices::FILEMANAGER_ID_FILE);
+    let mp = marker_path.clone();
+    let marker = tokio::task::spawn_blocking(move || std::fs::read_to_string(mp).ok())
+        .await
+        .unwrap_or(None);
+    if let Some(m) = marker.map(|s| s.trim().to_string()) {
+        if !m.is_empty() && m != device_id {
+            if let Some(other) = all.iter().find(|d| d.id == m) {
+                return Err(AppError::General(format!(
+                    "Folder is marked as device \"{}\" — remove that device first or pick another folder",
+                    other.label
+                )));
+            }
+        }
+    }
+
+    // Adopt: write marker BEFORE touching the DB, so a read-only fs aborts cleanly
+    let id_clone = device_id.clone();
+    let wp = marker_path.clone();
+    tokio::task::spawn_blocking(move || std::fs::write(&wp, &id_clone))
+        .await
+        .map_err(|e| AppError::General(e.to_string()))?
+        .map_err(|e| AppError::General(format!("Failed to write id marker: {}", e)))?;
+
+    let path_clone = new_path.clone();
+    let (_, avail) =
+        tokio::task::spawn_blocking(move || devices::disk_space_for_path(&path_clone))
+            .await
+            .unwrap_or((0, 0));
+
+    db::update_device_mount_point(&state.pool, &device_id, &new_path, avail).await?;
+    db::get_device(&state.pool, &device_id).await
+}
+
+#[tauri::command]
 pub async fn eject_device(mount_point: String) -> Result<(), AppError> {
     let output = std::process::Command::new("diskutil")
         .args(["eject", &mount_point])

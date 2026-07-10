@@ -133,6 +133,8 @@ pub fn run() {
             commands::unmount_network_drive,
             commands::remove_network_drive,
             commands::add_location,
+            commands::check_reconnect_target,
+            commands::reconnect_device,
             commands::resolve_file_path,
             commands::get_thumbnail,
             commands::open_file,
