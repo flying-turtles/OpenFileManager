@@ -1,4 +1,4 @@
-import { useEffect, useState, useMemo } from "react";
+import { useEffect, useState, useMemo, useCallback } from "react";
 import { useProjects } from "../hooks/useProjects";
 import { useDevices } from "../hooks/useDevices";
 import { FileTable } from "../components/FileTable";
@@ -29,9 +29,11 @@ function sortFiles(files: FileLocation[], key: SortKey, dir: SortDir): FileLocat
 
 interface ProjectsProps {
   onTransferProject: (id: number, title: string) => void;
+  /** Open straight to this project's detail view, e.g. from a scan summary. */
+  initialProjectId?: number;
 }
 
-export function Projects({ onTransferProject }: ProjectsProps) {
+export function Projects({ onTransferProject, initialProjectId }: ProjectsProps) {
   const { projects, selected, loading, refresh, select, create, update, remove, setSelected } =
     useProjects();
   const { devices } = useDevices();
@@ -75,7 +77,7 @@ export function Projects({ onTransferProject }: ProjectsProps) {
   }, [selected]);
 
   // Reset filters when opening a new project
-  const openDetail = async (id: number) => {
+  const openDetail = useCallback(async (id: number) => {
     setSafetyFilter("all");
     setExtFilter("");
     setDupDeviceFilter("");
@@ -84,7 +86,14 @@ export function Projects({ onTransferProject }: ProjectsProps) {
     setSortDir("asc");
     await select(id);
     setView("detail");
-  };
+  }, [select]);
+
+  // Deep link from elsewhere in the app (scan summary project chips)
+  useEffect(() => {
+    if (initialProjectId !== undefined) {
+      openDetail(initialProjectId);
+    }
+  }, [initialProjectId, openDetail]);
 
   const openCreate = () => {
     setTitle("");

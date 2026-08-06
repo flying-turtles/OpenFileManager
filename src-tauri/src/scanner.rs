@@ -72,14 +72,19 @@ fn scan_walker(target: &PathBuf) -> ignore::Walk {
         .build()
 }
 
-pub async fn run_scan(
-    pool: DbPool,
-    target: PathBuf,
-    channel: Channel<ScanEvent>,
-    cancel_token: CancellationToken,
-    progress: Arc<ScanProgress>,
-) -> Result<(), AppError> {
-    // Determine which device this path belongs to
+/// Which device a scan target sits on, and where within it.
+pub struct ScanScope {
+    pub device_id: String,
+    pub mount_point: String,
+    /// Target path relative to the mount point. Empty when the target *is*
+    /// the mount point, i.e. the whole device was scanned.
+    pub scan_prefix: String,
+}
+
+/// Resolves a scan target to its device and in-device prefix. Shared so that
+/// a scan and anything reporting on it agree on what "the scanned location"
+/// means.
+pub fn resolve_scan_scope(target: &std::path::Path) -> Result<ScanScope, AppError> {
     let volumes = detect_volumes();
     let target_str = target.to_string_lossy().to_string();
     let (device_id, mount_point) = device_for_path(&volumes, &target_str)
@@ -87,9 +92,30 @@ pub async fn run_scan(
 
     let scan_prefix = target
         .strip_prefix(&mount_point)
-        .unwrap_or(&target)
+        .unwrap_or(target)
         .to_string_lossy()
         .to_string();
+
+    Ok(ScanScope {
+        device_id,
+        mount_point,
+        scan_prefix,
+    })
+}
+
+pub async fn run_scan(
+    pool: DbPool,
+    target: PathBuf,
+    channel: Channel<ScanEvent>,
+    cancel_token: CancellationToken,
+    progress: Arc<ScanProgress>,
+) -> Result<(), AppError> {
+    let target_str = target.to_string_lossy().to_string();
+    let ScanScope {
+        device_id,
+        mount_point,
+        scan_prefix,
+    } = resolve_scan_scope(&target)?;
 
     // === Phase 0: load caches ===
     let dir_cache = db::get_dir_cache(&pool, &device_id, &scan_prefix).await?;

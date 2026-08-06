@@ -220,9 +220,33 @@ export interface SourceCleanupFile {
 export interface SourceCleanupPreview {
   sdDeviceId: string;
   sdLabel: string;
+  /** May be truncated for display — `fileCount` is the true total. */
   files: SourceCleanupFile[];
+  fileCount: number;
   totalBytes: number;
   skippedCount: number;
+}
+
+export interface ScanProjectSummary {
+  id: number;
+  title: string;
+  fileCount: number;
+  totalBytes: number;
+}
+
+export interface ScanSummary {
+  deviceId: string;
+  deviceLabel: string;
+  /** Empty when the whole device was scanned. */
+  scanPrefix: string;
+  totalFiles: number;
+  totalBytes: number;
+  oldestModified: string | null;
+  newestModified: string | null;
+  projects: ScanProjectSummary[];
+  unassignedFiles: number;
+  redundantFiles: number;
+  redundantBytes: number;
 }
 
 export interface SourceCleanupError {

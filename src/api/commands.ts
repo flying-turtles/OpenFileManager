@@ -7,6 +7,7 @@ import type {
   DashboardStats,
   DirEntry,
   ScanEvent,
+  ScanSummary,
   ImportEvent,
   SourceCleanupPreview,
   SourceCleanupResult,
@@ -95,6 +96,30 @@ export async function getPendingScans(): Promise<PendingScan[]> {
 
 export async function dismissPendingScan(id: number): Promise<void> {
   return invoke("dismiss_pending_scan", { id });
+}
+
+export async function getScanSummary(target: string): Promise<ScanSummary> {
+  return invoke("get_scan_summary", { target });
+}
+
+export async function getScanCleanupPreview(
+  target: string
+): Promise<SourceCleanupPreview> {
+  return invoke("get_scan_cleanup_preview", { target });
+}
+
+export async function deleteRedundantScannedFiles(
+  target: string,
+  permanent: boolean,
+  onEvent: (event: SourceCleanupEvent) => void
+): Promise<SourceCleanupResult> {
+  const channel = new Channel<SourceCleanupEvent>();
+  channel.onmessage = onEvent;
+  return invoke("delete_redundant_scanned_files", {
+    target,
+    permanent,
+    onEvent: channel,
+  });
 }
 
 export async function getFilesOnDevice(

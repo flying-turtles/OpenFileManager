@@ -318,9 +318,39 @@ pub struct SourceCleanupFile {
 pub struct SourceCleanupPreview {
     pub sd_device_id: String,
     pub sd_label: String,
+    /// Files to show. May be truncated — `file_count` is the true total.
     pub files: Vec<SourceCleanupFile>,
+    pub file_count: i64,
     pub total_bytes: i64,
     pub skipped_count: u64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ScanProjectSummary {
+    pub id: i64,
+    pub title: String,
+    pub file_count: i64,
+    pub total_bytes: i64,
+}
+
+/// What the index knows about a scanned location once a scan finishes.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ScanSummary {
+    pub device_id: String,
+    pub device_label: String,
+    /// Path relative to the device mount point; empty when the whole device
+    /// was scanned.
+    pub scan_prefix: String,
+    pub total_files: i64,
+    pub total_bytes: i64,
+    pub oldest_modified: Option<String>,
+    pub newest_modified: Option<String>,
+    pub projects: Vec<ScanProjectSummary>,
+    pub unassigned_files: i64,
+    pub redundant_files: i64,
+    pub redundant_bytes: i64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

@@ -211,22 +211,68 @@ pub async fn upsert_location(
     Ok(())
 }
 
+// --- Scan-scope path matching ---
+//
+// A scan targets a device (prefix "") or a folder on it. Matching the folder
+// with a bare `LIKE 'prefix%'` also catches siblings — scanning `Foo` would
+// pull in `Foobar` — so the predicate matches the path itself or anything
+// strictly beneath it.
+
+/// LIKE pattern matching everything strictly beneath `prefix`.
+pub(crate) fn scope_like(prefix: &str) -> String {
+    // Backslash first — it is the escape character itself.
+    let escaped = prefix
+        .replace('\\', "\\\\")
+        .replace('%', "\\%")
+        .replace('_', "\\_");
+    format!("{}/%", escaped)
+}
+
+/// `WHERE` fragment for rows under `prefix` on a device, with every column
+/// qualified by `alias` (pass `""` for an unaliased single-table query). An
+/// empty prefix means the whole device and needs no path predicate at all.
+/// Bind with [`bind_scope!`], which supplies the parameters in order.
+pub(crate) fn scope_clause(alias: &str, column: &str, prefix: &str) -> String {
+    let q = if alias.is_empty() {
+        String::new()
+    } else {
+        format!("{}.", alias)
+    };
+    if prefix.is_empty() {
+        format!("{q}device_id = ?", q = q)
+    } else {
+        format!(
+            "{q}device_id = ? AND ({q}{c} = ? OR {q}{c} LIKE ? ESCAPE '\\')",
+            q = q,
+            c = column
+        )
+    }
+}
+
+/// Binds the parameters `scope_clause` expects, in order.
+macro_rules! bind_scope {
+    ($query:expr, $device_id:expr, $prefix:expr) => {{
+        let q = $query.bind($device_id);
+        if $prefix.is_empty() {
+            q
+        } else {
+            q.bind($prefix).bind(crate::db::scope_like($prefix))
+        }
+    }};
+}
+
 pub async fn get_locations_by_prefix(
     pool: &DbPool,
     device_id: &str,
     prefix: &str,
 ) -> Result<HashMap<String, FileLocation>, AppError> {
-    let prefix_pattern = format!(
-        "{}%",
-        prefix.replace('%', "\\%").replace('_', "\\_")
+    let sql = format!(
+        "SELECT * FROM file_locations WHERE {}",
+        scope_clause("", "file_path", prefix)
     );
-    let rows = sqlx::query_as::<_, FileLocation>(
-        "SELECT * FROM file_locations WHERE device_id = ? AND file_path LIKE ? ESCAPE '\\'"
-    )
-    .bind(device_id)
-    .bind(&prefix_pattern)
-    .fetch_all(pool)
-    .await?;
+    let rows = bind_scope!(sqlx::query_as::<_, FileLocation>(&sql), device_id, prefix)
+        .fetch_all(pool)
+        .await?;
     let mut map = HashMap::with_capacity(rows.len());
     for loc in rows {
         map.insert(loc.file_path.clone(), loc);
@@ -685,21 +731,14 @@ pub async fn remove_stale_locations(
     seen_paths: &[String],
 ) -> Result<u64, AppError> {
     // Delete locations under the scanned prefix that weren't seen
-    // Use a prefix match with LIKE (escape % and _ in prefix)
-    let prefix_pattern = format!(
-        "{}%",
-        path_prefix.replace('%', "\\%").replace('_', "\\_")
-    );
+    let scope = scope_clause("", "file_path", path_prefix);
 
     if seen_paths.is_empty() {
         // Nothing seen = everything under prefix is gone
-        let res = sqlx::query(
-            "DELETE FROM file_locations WHERE device_id = ? AND file_path LIKE ? ESCAPE '\\'"
-        )
-        .bind(device_id)
-        .bind(&prefix_pattern)
-        .execute(pool)
-        .await?;
+        let sql = format!("DELETE FROM file_locations WHERE {}", scope);
+        let res = bind_scope!(sqlx::query(&sql), device_id, path_prefix)
+            .execute(pool)
+            .await?;
         return Ok(res.rows_affected());
     }
 
@@ -707,13 +746,10 @@ pub async fn remove_stale_locations(
     // For simplicity, batch delete with NOT IN (chunked to avoid SQLite limits)
     let mut total_deleted: u64 = 0;
     // Get all existing locations under prefix
-    let existing = sqlx::query_as::<_, (i64, String)>(
-        "SELECT id, file_path FROM file_locations WHERE device_id = ? AND file_path LIKE ? ESCAPE '\\'"
-    )
-    .bind(device_id)
-    .bind(&prefix_pattern)
-    .fetch_all(pool)
-    .await?;
+    let sql = format!("SELECT id, file_path FROM file_locations WHERE {}", scope);
+    let existing = bind_scope!(sqlx::query_as::<_, (i64, String)>(&sql), device_id, path_prefix)
+        .fetch_all(pool)
+        .await?;
 
     let seen_set: std::collections::HashSet<&str> = seen_paths.iter().map(|s| s.as_str()).collect();
     let stale_ids: Vec<i64> = existing
@@ -779,6 +815,179 @@ pub async fn get_locations_for_hashes(
         }
     }
     Ok(result)
+}
+
+// --- Scan summary queries ---
+//
+// All of these describe the *scanned location* as the index currently knows
+// it, not what a particular scan run touched. A scan skips unchanged
+// directories, so its counters would badly understate a re-scan.
+
+/// Total file count, total bytes, and the modified-at range of everything
+/// indexed under the scanned location.
+pub async fn get_scan_location_stats(
+    pool: &DbPool,
+    device_id: &str,
+    prefix: &str,
+) -> Result<(i64, i64, Option<String>, Option<String>), AppError> {
+    let sql = format!(
+        "SELECT COUNT(*), COALESCE(SUM(file_size), 0), MIN(modified_at), MAX(modified_at)
+         FROM file_locations WHERE {}",
+        scope_clause("", "file_path", prefix)
+    );
+    let row = bind_scope!(
+        sqlx::query_as::<_, (i64, i64, Option<String>, Option<String>)>(&sql),
+        device_id,
+        prefix
+    )
+    .fetch_one(pool)
+    .await?;
+    Ok(row)
+}
+
+/// The CTEs shared by the project-breakdown queries: the distinct hashes in
+/// the scanned location, and the earliest modified-at of each across *all*
+/// devices. Using the global minimum matches how the Projects page assigns
+/// files, so both views agree on membership.
+fn scan_project_cte(prefix: &str) -> String {
+    format!(
+        "WITH scoped AS (
+             SELECT DISTINCT blake3_hash FROM file_locations WHERE {}
+         ),
+         first_mod AS (
+             SELECT fl.blake3_hash AS h, MIN(fl.modified_at) AS m
+             FROM file_locations fl
+             WHERE fl.blake3_hash IN (SELECT blake3_hash FROM scoped)
+             GROUP BY fl.blake3_hash
+         )",
+        scope_clause("", "file_path", prefix)
+    )
+}
+
+/// Per-project file counts and sizes for the scanned location, plus the
+/// number of files that fall outside every project's date range.
+pub async fn get_scan_project_breakdown(
+    pool: &DbPool,
+    device_id: &str,
+    prefix: &str,
+) -> Result<(Vec<ScanProjectSummary>, i64), AppError> {
+    let cte = scan_project_cte(prefix);
+
+    let sql = format!(
+        "{} SELECT p.id, p.title, COUNT(*), COALESCE(SUM(f.file_size), 0)
+         FROM projects p
+         JOIN first_mod fm ON fm.m >= p.start_date AND fm.m < date(p.end_date, '+1 day')
+         JOIN files f ON f.blake3_hash = fm.h
+         GROUP BY p.id, p.title
+         ORDER BY p.start_date DESC",
+        cte
+    );
+    let rows = bind_scope!(
+        sqlx::query_as::<_, (i64, String, i64, i64)>(&sql),
+        device_id,
+        prefix
+    )
+    .fetch_all(pool)
+    .await?;
+
+    let projects = rows
+        .into_iter()
+        .map(|(id, title, file_count, total_bytes)| ScanProjectSummary {
+            id,
+            title,
+            file_count,
+            total_bytes,
+        })
+        .collect();
+
+    // Files with a NULL modified_at can never match a range, so they land
+    // here — which is the honest answer for "not in any project".
+    let sql = format!(
+        "{} SELECT COUNT(*) FROM first_mod fm
+         WHERE NOT EXISTS (
+             SELECT 1 FROM projects p
+             WHERE fm.m >= p.start_date AND fm.m < date(p.end_date, '+1 day')
+         )",
+        cte
+    );
+    let (unassigned,): (i64,) = bind_scope!(sqlx::query_as(&sql), device_id, prefix)
+        .fetch_one(pool)
+        .await?;
+
+    Ok((projects, unassigned))
+}
+
+/// `WHERE` fragment selecting scoped locations whose content also lives on at
+/// least two *other* devices.
+///
+/// Two guards make this trustworthy enough to delete on:
+///
+/// * `DISTINCT o.device_id` with `o.device_id <> fl.device_id` — two copies
+///   elsewhere on the scanned drive are not a backup, one dead disk takes
+///   them all. Only genuinely separate devices count.
+/// * `o.file_size = fl.file_size` — `blake3_hash` covers only the first 4 MB
+///   (see `hasher::hash_file_partial_sync`), so files that merely share a
+///   header collide. Requiring an exact size match rules that out.
+fn redundant_predicate() -> &'static str {
+    "fl.blake3_hash NOT LIKE 'deferred:%'
+     AND (
+         SELECT COUNT(DISTINCT o.device_id)
+         FROM file_locations o
+         WHERE o.blake3_hash = fl.blake3_hash
+           AND o.device_id <> fl.device_id
+           AND o.file_size = fl.file_size
+     ) >= 2"
+}
+
+/// Count and total size of scoped files that are safe to delete.
+pub async fn get_scan_redundancy_totals(
+    pool: &DbPool,
+    device_id: &str,
+    prefix: &str,
+) -> Result<(i64, i64), AppError> {
+    let sql = format!(
+        "SELECT COUNT(*), COALESCE(SUM(fl.file_size), 0)
+         FROM file_locations fl
+         WHERE {} AND {}",
+        scope_clause("fl", "file_path", prefix),
+        redundant_predicate()
+    );
+    let row = bind_scope!(sqlx::query_as::<_, (i64, i64)>(&sql), device_id, prefix)
+        .fetch_one(pool)
+        .await?;
+    Ok(row)
+}
+
+/// The scoped files that are safe to delete. `limit` caps the returned rows
+/// for display; pass `None` when the caller intends to act on all of them.
+pub async fn get_scan_redundant_files(
+    pool: &DbPool,
+    device_id: &str,
+    prefix: &str,
+    limit: Option<i64>,
+) -> Result<Vec<(String, String, i64, String)>, AppError> {
+    let sql = format!(
+        "SELECT fl.file_path, fl.file_name, fl.file_size, fl.blake3_hash
+         FROM file_locations fl
+         WHERE {} AND {}
+         ORDER BY fl.file_size DESC{}",
+        scope_clause("fl", "file_path", prefix),
+        redundant_predicate(),
+        match limit {
+            Some(_) => " LIMIT ?",
+            None => "",
+        }
+    );
+    let query = bind_scope!(
+        sqlx::query_as::<_, (String, String, i64, String)>(&sql),
+        device_id,
+        prefix
+    );
+    let query = match limit {
+        Some(n) => query.bind(n),
+        None => query,
+    };
+    Ok(query.fetch_all(pool).await?)
 }
 
 // --- Project queries ---
@@ -1107,17 +1316,13 @@ pub async fn get_dir_cache(
     device_id: &str,
     prefix: &str,
 ) -> Result<HashMap<String, DirCacheEntry>, AppError> {
-    let prefix_pattern = format!(
-        "{}%",
-        prefix.replace('%', "\\%").replace('_', "\\_")
+    let sql = format!(
+        "SELECT dir_path, dir_mtime, file_count FROM dir_cache WHERE {}",
+        scope_clause("", "dir_path", prefix)
     );
-    let rows = sqlx::query_as::<_, (String, String, i64)>(
-        "SELECT dir_path, dir_mtime, file_count FROM dir_cache WHERE device_id = ? AND dir_path LIKE ? ESCAPE '\\'"
-    )
-    .bind(device_id)
-    .bind(&prefix_pattern)
-    .fetch_all(pool)
-    .await?;
+    let rows = bind_scope!(sqlx::query_as::<_, (String, String, i64)>(&sql), device_id, prefix)
+        .fetch_all(pool)
+        .await?;
     let mut map = HashMap::with_capacity(rows.len());
     for (path, mtime, count) in rows {
         map.insert(path, DirCacheEntry { dir_mtime: mtime, file_count: count });
@@ -1156,17 +1361,13 @@ pub async fn remove_stale_dir_cache(
     prefix: &str,
     seen_dirs: &[String],
 ) -> Result<(), AppError> {
-    let prefix_pattern = format!(
-        "{}%",
-        prefix.replace('%', "\\%").replace('_', "\\_")
+    let sql = format!(
+        "SELECT dir_path FROM dir_cache WHERE {}",
+        scope_clause("", "dir_path", prefix)
     );
-    let existing = sqlx::query_as::<_, (String,)>(
-        "SELECT dir_path FROM dir_cache WHERE device_id = ? AND dir_path LIKE ? ESCAPE '\\'"
-    )
-    .bind(device_id)
-    .bind(&prefix_pattern)
-    .fetch_all(pool)
-    .await?;
+    let existing = bind_scope!(sqlx::query_as::<_, (String,)>(&sql), device_id, prefix)
+        .fetch_all(pool)
+        .await?;
 
     let seen_set: std::collections::HashSet<&str> = seen_dirs.iter().map(|s| s.as_str()).collect();
     let stale: Vec<&str> = existing

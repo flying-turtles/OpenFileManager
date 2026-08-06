@@ -189,9 +189,17 @@ pub async fn compute_source_cleanup(
     let mut skipped_count: u64 = 0;
 
     for f in &analysis.files {
+        // Size must match too: blake3_hash only covers the first 4 MB
+        // (hasher::hash_file_partial_sync), so files sharing a header — very
+        // common for video containers — collide on hash alone.
         let mut backup_device_ids: Vec<String> = locations_map
             .get(&f.blake3_hash)
-            .map(|locs| locs.iter().map(|l| l.device_id.clone()).collect())
+            .map(|locs| {
+                locs.iter()
+                    .filter(|l| l.file_size == f.file_size)
+                    .map(|l| l.device_id.clone())
+                    .collect()
+            })
             .unwrap_or_default();
         backup_device_ids.sort();
         backup_device_ids.dedup();
@@ -214,6 +222,7 @@ pub async fn compute_source_cleanup(
     Ok(SourceCleanupPreview {
         sd_device_id: analysis.sd_device_id.clone(),
         sd_label: analysis.sd_label.clone(),
+        file_count: files.len() as i64,
         files,
         total_bytes,
         skipped_count,

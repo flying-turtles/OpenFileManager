@@ -75,3 +75,118 @@
   display: flex;
   gap: 8px;
 }
+
+/* --- Post-scan summary --- */
+.scan-summary {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 20px;
+  margin-top: 16px;
+}
+
+.scan-summary-loading {
+  color: var(--text-muted);
+  font-size: 13px;
+  margin-top: 16px;
+}
+
+.scan-summary-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 12px;
+  margin-bottom: 16px;
+}
+
+.scan-summary-header h3 {
+  margin: 0;
+  font-size: 15px;
+  word-break: break-all;
+}
+
+.scan-summary-stats {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 16px;
+  margin-bottom: 20px;
+}
+
+.scan-summary-stat {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.scan-summary-label {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-muted);
+}
+
+.scan-summary-value {
+  font-size: 17px;
+  font-weight: 600;
+}
+
+.scan-summary-section {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding-top: 16px;
+  border-top: 1px solid var(--border);
+}
+
+.scan-summary-section p {
+  margin: 0;
+}
+
+.scan-summary-projects {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.scan-summary-project {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  padding: 6px 12px;
+  font: inherit;
+  text-align: left;
+  background: var(--bg-input, transparent);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  cursor: pointer;
+}
+
+button.scan-summary-project:hover {
+  border-color: var(--accent);
+}
+
+.scan-summary-project-none {
+  cursor: default;
+  opacity: 0.7;
+}
+
+.scan-summary-project-title {
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.scan-summary-cleanup {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 16px;
+  flex-wrap: wrap;
+  margin-top: 16px;
+  padding-top: 16px;
+  border-top: 1px solid var(--border);
+}
+
+.scan-summary-cleanup p {
+  margin: 0;
+  color: var(--text-muted);
+}

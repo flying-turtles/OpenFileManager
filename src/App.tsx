@@ -19,6 +19,7 @@ function App() {
   const [page, setPage] = useState<Page>("dashboard");
   const [scanDevice, setScanDevice] = useState<StorageDevice | undefined>();
   const [transferProject, setTransferProject] = useState<{ id: number; title: string } | null>(null);
+  const [openProject, setOpenProject] = useState<number | undefined>();
   const [filesFilter, setFilesFilter] = useState<FilesFilter>("all");
   const [connectPrompts, setConnectPrompts] = useState<StorageDevice[]>([]);
 
@@ -70,6 +71,11 @@ function App() {
     setPage("files");
   }, []);
 
+  const handleOpenProject = useCallback((id: number) => {
+    setOpenProject(id);
+    setPage("projects");
+  }, []);
+
   return (
     <div className="app">
       <nav className="sidebar">
@@ -92,7 +98,10 @@ function App() {
         <button className={page === "transfer" ? "active" : ""} onClick={() => setPage("transfer")}>
           Transfer
         </button>
-        <button className={page === "projects" ? "active" : ""} onClick={() => setPage("projects")}>
+        <button
+          className={page === "projects" ? "active" : ""}
+          onClick={() => { setOpenProject(undefined); setPage("projects"); }}
+        >
           Projects
         </button>
         <button className={page === "similar" ? "active" : ""} onClick={() => setPage("similar")}>
@@ -138,7 +147,7 @@ function App() {
           <Devices onScanDevice={handleScanDevice} />
         </div>
         <div className={page === "scanner" ? "contents-display" : "hidden-display"}>
-          <Scanner initialDevice={scanDevice} />
+          <Scanner initialDevice={scanDevice} onOpenProject={handleOpenProject} />
         </div>
         {page === "files" && <FileBrowser initialFilter={filesFilter} />}
         <div className={page === "import" ? "contents-display" : "hidden-display"}>
@@ -147,7 +156,9 @@ function App() {
         <div className={page === "transfer" ? "contents-display" : "hidden-display"}>
           <Transfer project={transferProject} />
         </div>
-        {page === "projects" && <Projects onTransferProject={handleTransferProject} />}
+        {page === "projects" && (
+          <Projects onTransferProject={handleTransferProject} initialProjectId={openProject} />
+        )}
         <div className={page === "backup" ? "contents-display" : "hidden-display"}>
           <Backup />
         </div>

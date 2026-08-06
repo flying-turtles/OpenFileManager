@@ -3,19 +3,33 @@ import { useFocusTrap } from "../hooks/useFocusTrap";
 import { PermanentToggle } from "./FileTable";
 import { getImportCleanupPreview, deleteImportedSourceFiles } from "../api/commands";
 import { formatBytes } from "../utils/format";
-import type { SourceCleanupPreview, SourceCleanupResult } from "../types";
+import type { SourceCleanupPreview, SourceCleanupResult, SourceCleanupEvent } from "../types";
 
 interface Props {
   deviceNames: Record<string, string>;
   onDeleted: () => void;
   onClose: () => void;
+  /** Defaults to the import-source flow. */
+  loadPreview?: () => Promise<SourceCleanupPreview>;
+  runDelete?: (
+    permanent: boolean,
+    onEvent: (event: SourceCleanupEvent) => void
+  ) => Promise<SourceCleanupResult>;
 }
 
 /**
- * Deletes files from the import source device that have copies on at least
- * two other devices. Eligibility is computed (and re-checked) in the backend.
+ * Deletes files that have copies on at least two other devices — from the
+ * import source device by default, or from any location the caller supplies
+ * via `loadPreview`/`runDelete`. Eligibility is always computed and
+ * re-checked in the backend; the list shown here is display only.
  */
-export function SourceCleanupModal({ deviceNames, onDeleted, onClose }: Props) {
+export function SourceCleanupModal({
+  deviceNames,
+  onDeleted,
+  onClose,
+  loadPreview = getImportCleanupPreview,
+  runDelete = deleteImportedSourceFiles,
+}: Props) {
   const trapRef = useFocusTrap<HTMLDivElement>();
   const [preview, setPreview] = useState<SourceCleanupPreview | null>(null);
   const [loadError, setLoadError] = useState("");
@@ -27,12 +41,14 @@ export function SourceCleanupModal({ deviceNames, onDeleted, onClose }: Props) {
   const [result, setResult] = useState<SourceCleanupResult | null>(null);
 
   useEffect(() => {
-    getImportCleanupPreview()
+    loadPreview()
       .then(setPreview)
       .catch((e) => setLoadError(String(e)));
-  }, []);
+  }, [loadPreview]);
 
-  const total = preview?.files.length ?? 0;
+  // The list may be truncated for display, so counts come from fileCount.
+  const total = preview?.fileCount ?? 0;
+  const shown = preview?.files.length ?? 0;
   const pct = total > 0 ? Math.round((processed / total) * 100) : 0;
   const canDelete = preview !== null && confirmText === preview.sdLabel && total > 0;
 
@@ -41,7 +57,7 @@ export function SourceCleanupModal({ deviceNames, onDeleted, onClose }: Props) {
     setProcessed(0);
     setCurrentFile("");
     try {
-      const res = await deleteImportedSourceFiles(permanent, (event) => {
+      const res = await runDelete(permanent, (event) => {
         if ("Progress" in event) {
           setProcessed(event.Progress.processed);
           setCurrentFile(event.Progress.currentFile);
@@ -156,6 +172,11 @@ export function SourceCleanupModal({ deviceNames, onDeleted, onClose }: Props) {
                   </span>
                 </div>
               ))}
+              {shown < total && (
+                <div className="bulk-delete-file-item text-muted-color text-xs">
+                  Showing the {shown} largest of {total} files — all {total} will be deleted.
+                </div>
+              )}
             </div>
             <PermanentToggle permanent={permanent} onChange={setPermanent} disabled={deleting} />
             <div className="form-group" style={{ marginTop: 16 }}>
