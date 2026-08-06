@@ -15,6 +15,9 @@ interface Props {
   onOpenProject: (id: number) => void;
 }
 
+/** Device combinations listed before collapsing the tail into a count. */
+const GROUP_LIMIT = 8;
+
 /** `2024-03-07 14:22:01` -> `7 Mar 2024`. Falls back to the raw string. */
 function formatDay(value: string | null): string {
   if (!value) return "—";
@@ -99,6 +102,42 @@ export function ScanSummaryPanel({ target, deviceNames, onOpenProject }: Props) 
             )}
           </span>
         </div>
+      </div>
+
+      <div className="scan-summary-section">
+        <span className="scan-summary-label">Where else these files live</span>
+        {summary.deviceGroups.length === 0 ? (
+          <p className="text-muted-color text-xs">Nothing indexed here yet.</p>
+        ) : (
+          <div className="scan-summary-groups">
+            {summary.deviceGroups.slice(0, GROUP_LIMIT).map((g) => {
+              const nowhere = g.deviceIds.length === 0;
+              return (
+                <div
+                  key={g.deviceIds.join(",") || "__none__"}
+                  className={`scan-summary-group${nowhere ? " scan-summary-group-alone" : ""}`}
+                >
+                  <span className="scan-summary-group-count">
+                    {g.fileCount.toLocaleString()}
+                    <span className="text-muted-color"> / {summary.totalFiles.toLocaleString()}</span>
+                  </span>
+                  <span className="scan-summary-group-devices">
+                    {nowhere
+                      ? "Nowhere else — only on this device"
+                      : g.deviceIds.map((id) => deviceNames[id] || id).join(" + ")}
+                  </span>
+                  <span className="text-muted-color text-xs">{formatBytes(g.totalBytes)}</span>
+                </div>
+              );
+            })}
+            {summary.deviceGroups.length > GROUP_LIMIT && (
+              <p className="text-muted-color text-xs">
+                +{summary.deviceGroups.length - GROUP_LIMIT} more device combination
+                {summary.deviceGroups.length - GROUP_LIMIT !== 1 ? "s" : ""}
+              </p>
+            )}
+          </div>
+        )}
       </div>
 
       <div className="scan-summary-section">

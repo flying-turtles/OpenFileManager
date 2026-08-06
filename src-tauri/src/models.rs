@@ -334,6 +334,17 @@ pub struct ScanProjectSummary {
     pub total_bytes: i64,
 }
 
+/// How many scanned files share the same set of other devices holding a copy.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ScanDeviceGroup {
+    /// Devices *other* than the scanned one, sorted. Empty means the files
+    /// exist nowhere else.
+    pub device_ids: Vec<String>,
+    pub file_count: i64,
+    pub total_bytes: i64,
+}
+
 /// What the index knows about a scanned location once a scan finishes.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -349,6 +360,7 @@ pub struct ScanSummary {
     pub newest_modified: Option<String>,
     pub projects: Vec<ScanProjectSummary>,
     pub unassigned_files: i64,
+    pub device_groups: Vec<ScanDeviceGroup>,
     pub redundant_files: i64,
     pub redundant_bytes: i64,
 }

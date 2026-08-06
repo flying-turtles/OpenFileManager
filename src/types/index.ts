@@ -234,6 +234,13 @@ export interface ScanProjectSummary {
   totalBytes: number;
 }
 
+export interface ScanDeviceGroup {
+  /** Devices other than the scanned one, sorted. Empty = nowhere else. */
+  deviceIds: string[];
+  fileCount: number;
+  totalBytes: number;
+}
+
 export interface ScanSummary {
   deviceId: string;
   deviceLabel: string;
@@ -245,6 +252,7 @@ export interface ScanSummary {
   newestModified: string | null;
   projects: ScanProjectSummary[];
   unassignedFiles: number;
+  deviceGroups: ScanDeviceGroup[];
   redundantFiles: number;
   redundantBytes: number;
 }

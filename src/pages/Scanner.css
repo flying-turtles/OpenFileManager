@@ -190,3 +190,39 @@ button.scan-summary-project:hover {
   margin: 0;
   color: var(--text-muted);
 }
+
+.scan-summary-groups {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.scan-summary-group {
+  display: grid;
+  grid-template-columns: minmax(90px, auto) 1fr auto;
+  align-items: baseline;
+  gap: 12px;
+  padding: 6px 10px;
+  border-radius: var(--radius);
+  background: var(--bg-input, transparent);
+  border: 1px solid var(--border);
+}
+
+.scan-summary-group-alone {
+  border-color: var(--warn);
+}
+
+.scan-summary-group-count {
+  font-size: 13px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+.scan-summary-group-devices {
+  font-size: 13px;
+  word-break: break-word;
+}
+
+.scan-summary-groups p {
+  margin: 0;
+}

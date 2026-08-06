@@ -917,6 +917,71 @@ pub async fn get_scan_project_breakdown(
     Ok((projects, unassigned))
 }
 
+/// Groups the scanned files by *which* other devices hold a copy, so the
+/// summary can say "200 of 500 files are also on A and B, 100 on C".
+///
+/// Copies are matched on hash **and** size for the same reason the delete
+/// path does — see [`redundant_predicate`].
+pub async fn get_scan_device_groups(
+    pool: &DbPool,
+    device_id: &str,
+    prefix: &str,
+) -> Result<Vec<ScanDeviceGroup>, AppError> {
+    let sql = format!(
+        "WITH scoped AS (
+             SELECT fl.blake3_hash AS h, fl.file_size AS sz, fl.device_id AS did
+             FROM file_locations fl WHERE {}
+         )
+         SELECT (SELECT COALESCE(GROUP_CONCAT(dev, ','), '') FROM (
+                     SELECT DISTINCT o.device_id AS dev
+                     FROM file_locations o
+                     WHERE o.blake3_hash = s.h
+                       AND o.device_id <> s.did
+                       AND o.file_size = s.sz
+                     ORDER BY o.device_id
+                 )) AS devices,
+                COUNT(*), COALESCE(SUM(s.sz), 0)
+         FROM scoped s
+         GROUP BY devices",
+        scope_clause("fl", "file_path", prefix)
+    );
+    let rows = bind_scope!(
+        sqlx::query_as::<_, (String, i64, i64)>(&sql),
+        device_id,
+        prefix
+    )
+    .fetch_all(pool)
+    .await?;
+
+    // GROUP_CONCAT's ordering is not contractual, so two rows could describe
+    // the same device set in different orders. Canonicalise and merge here
+    // rather than trusting SQLite to have grouped them together.
+    let mut merged: HashMap<Vec<String>, (i64, i64)> = HashMap::new();
+    for (devices, file_count, total_bytes) in rows {
+        let mut ids: Vec<String> = devices
+            .split(',')
+            .filter(|s| !s.is_empty())
+            .map(|s| s.to_string())
+            .collect();
+        ids.sort();
+        ids.dedup();
+        let entry = merged.entry(ids).or_insert((0, 0));
+        entry.0 += file_count;
+        entry.1 += total_bytes;
+    }
+
+    let mut groups: Vec<ScanDeviceGroup> = merged
+        .into_iter()
+        .map(|(device_ids, (file_count, total_bytes))| ScanDeviceGroup {
+            device_ids,
+            file_count,
+            total_bytes,
+        })
+        .collect();
+    groups.sort_by(|a, b| b.file_count.cmp(&a.file_count));
+    Ok(groups)
+}
+
 /// `WHERE` fragment selecting scoped locations whose content also lives on at
 /// least two *other* devices.
 ///

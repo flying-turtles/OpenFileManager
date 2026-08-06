@@ -118,6 +118,8 @@ pub async fn get_scan_summary(
         db::get_scan_project_breakdown(pool, &scope.device_id, &scope.scan_prefix).await?;
     let (redundant_files, redundant_bytes) =
         db::get_scan_redundancy_totals(pool, &scope.device_id, &scope.scan_prefix).await?;
+    let device_groups =
+        db::get_scan_device_groups(pool, &scope.device_id, &scope.scan_prefix).await?;
 
     let device_label = db::get_device(pool, &scope.device_id)
         .await
@@ -134,6 +136,7 @@ pub async fn get_scan_summary(
         newest_modified,
         projects,
         unassigned_files,
+        device_groups,
         redundant_files,
         redundant_bytes,
     })
