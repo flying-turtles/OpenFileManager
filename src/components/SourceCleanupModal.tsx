@@ -50,7 +50,10 @@ export function SourceCleanupModal({
   const total = preview?.fileCount ?? 0;
   const shown = preview?.files.length ?? 0;
   const pct = total > 0 ? Math.round((processed / total) * 100) : 0;
-  const canDelete = preview !== null && confirmText === preview.sdLabel && total > 0;
+  // Typing the label is only warranted for permanent deletion. A move to the
+  // Trash is recoverable, so it does not need the extra friction.
+  const confirmed = !permanent || confirmText === preview?.sdLabel;
+  const canDelete = preview !== null && confirmed && total > 0;
 
   const handleDelete = async () => {
     setDeleting(true);
@@ -179,16 +182,18 @@ export function SourceCleanupModal({
               )}
             </div>
             <PermanentToggle permanent={permanent} onChange={setPermanent} disabled={deleting} />
-            <div className="form-group" style={{ marginTop: 16 }}>
-              <label>Type "<strong>{preview.sdLabel}</strong>" to confirm</label>
-              <input
-                type="text"
-                value={confirmText}
-                onChange={(e) => setConfirmText(e.target.value)}
-                placeholder={preview.sdLabel}
-                autoFocus
-              />
-            </div>
+            {permanent && (
+              <div className="form-group" style={{ marginTop: 16 }}>
+                <label>Type "<strong>{preview.sdLabel}</strong>" to confirm</label>
+                <input
+                  type="text"
+                  value={confirmText}
+                  onChange={(e) => setConfirmText(e.target.value)}
+                  placeholder={preview.sdLabel}
+                  autoFocus
+                />
+              </div>
+            )}
             <div className="form-actions">
               <button onClick={onClose}>Cancel</button>
               <button className="btn-danger" onClick={handleDelete} disabled={!canDelete}>
