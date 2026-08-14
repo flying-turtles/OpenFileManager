@@ -1,6 +1,6 @@
 mod backup;
 mod devices;
-mod files;
+pub mod files;
 mod import;
 mod network;
 mod preview;
