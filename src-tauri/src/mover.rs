@@ -1,7 +1,12 @@
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
+use std::time::SystemTime;
 
+use ignore::WalkBuilder;
+
+use crate::devices;
 use crate::error::AppError;
+use crate::models::*;
 
 /// Destination sub-directory for a file, from its modified timestamp
 /// ("2026-03-14 09:12:33" -> "2026-03-14").
@@ -60,9 +65,234 @@ pub fn validate_roots(sources: &[PathBuf], dest: &Path) -> Result<(), AppError> 
     Ok(())
 }
 
+/// Walk the selected sources and assign every file a dated destination.
+/// Blocking filesystem work — call from `spawn_blocking`.
+pub fn build_plan(
+    sources: Vec<PathBuf>,
+    dest: PathBuf,
+    volumes: &[DetectedDisk],
+) -> Result<MovePlan, AppError> {
+    validate_roots(&sources, &dest)?;
+
+    let dest_str = dest.to_string_lossy().to_string();
+    let (dest_device_id, dest_mount) = devices::device_for_path(volumes, &dest_str)
+        .ok_or_else(|| AppError::General(format!("No device for destination: {}", dest_str)))?;
+    let dest_label = volumes
+        .iter()
+        .find(|v| v.id == dest_device_id)
+        .map(|v| v.label.clone())
+        .unwrap_or_else(|| "Destination".to_string());
+
+    let mut source_device: Option<(String, String)> = None;
+    for src in &sources {
+        let src_str = src.to_string_lossy().to_string();
+        let resolved = devices::device_for_path(volumes, &src_str)
+            .ok_or_else(|| AppError::General(format!("No device for source: {}", src_str)))?;
+        match &source_device {
+            None => source_device = Some(resolved),
+            Some(existing) if existing.0 != resolved.0 => {
+                return Err(AppError::General(
+                    "All sources must be on the same device".into(),
+                ))
+            }
+            _ => {}
+        }
+    }
+    let (source_device_id, source_mount) = source_device
+        .ok_or_else(|| AppError::General("No source selected".into()))?;
+
+    let same_volume = source_device_id == dest_device_id;
+    let mut taken: HashSet<PathBuf> = HashSet::new();
+    let mut files = Vec::new();
+    let mut total_bytes: i64 = 0;
+
+    for src in &sources {
+        let walked: Vec<PathBuf> = WalkBuilder::new(src)
+            .hidden(true)
+            .git_ignore(false)
+            .git_global(false)
+            .git_exclude(false)
+            .add_custom_ignore_filename(".openfileignore")
+            .build()
+            .filter_map(|e| e.ok())
+            .filter(|e| e.file_type().map_or(false, |ft| ft.is_file()))
+            .map(|e| e.into_path())
+            .collect();
+
+        for path in walked {
+            let metadata = match std::fs::metadata(&path) {
+                Ok(m) => m,
+                Err(_) => continue,
+            };
+            let file_size = metadata.len() as i64;
+
+            let modified_at = metadata
+                .modified()
+                .ok()
+                .and_then(|t| t.duration_since(SystemTime::UNIX_EPOCH).ok())
+                .and_then(|d| chrono::DateTime::from_timestamp(d.as_secs() as i64, 0))
+                .map(|dt| dt.format("%Y-%m-%d %H:%M:%S").to_string());
+
+            let file_name = path
+                .file_name()
+                .unwrap_or_default()
+                .to_string_lossy()
+                .to_string();
+
+            let dest_dir = dest.join(date_dir(modified_at.as_deref()));
+            let dest_path = assign_dest(&dest_dir, &file_name, &mut taken, &|p| p.exists());
+
+            total_bytes += file_size;
+            files.push(MoveFile {
+                source_path: path.to_string_lossy().to_string(),
+                dest_path: dest_path.to_string_lossy().to_string(),
+                file_name,
+                file_size,
+                modified_at,
+                same_volume,
+            });
+        }
+    }
+
+    let total_files = files.len() as u64;
+    let same_volume_count = if same_volume { total_files } else { 0 };
+
+    Ok(MovePlan {
+        files,
+        total_files,
+        total_bytes,
+        source_device_id,
+        source_mount,
+        source_roots: sources
+            .iter()
+            .map(|p| p.to_string_lossy().to_string())
+            .collect(),
+        dest_device_id,
+        dest_mount,
+        dest_label,
+        same_volume_count,
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::models::DetectedDisk;
+
+    fn disk(id: &str, mount: &str) -> DetectedDisk {
+        DetectedDisk {
+            id: id.to_string(),
+            label: format!("{} label", id),
+            mount_point: mount.to_string(),
+            total_bytes: 0,
+            available_bytes: 0,
+            is_removable: false,
+        }
+    }
+
+    #[test]
+    fn build_plan_walks_a_folder_and_dates_the_destination() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path();
+        let src = root.join("src/Shoot");
+        std::fs::create_dir_all(src.join("RAW")).unwrap();
+        std::fs::write(src.join("RAW/a.cr3"), b"hello").unwrap();
+        let dest = root.join("dst");
+        std::fs::create_dir_all(&dest).unwrap();
+
+        let volumes = vec![disk("vol-1", root.to_str().unwrap())];
+        let plan = build_plan(vec![src.clone()], dest.clone(), &volumes).unwrap();
+
+        assert_eq!(plan.total_files, 1);
+        assert_eq!(plan.total_bytes, 5);
+        assert_eq!(plan.source_device_id, "vol-1");
+        assert_eq!(plan.dest_device_id, "vol-1");
+        assert_eq!(plan.same_volume_count, 1);
+        assert!(plan.files[0].same_volume);
+        assert_eq!(plan.files[0].file_name, "a.cr3");
+        // Nested under a date dir directly beneath dest — no "RAW" level.
+        let rel = PathBuf::from(&plan.files[0].dest_path);
+        let rel = rel.strip_prefix(&dest).unwrap();
+        let mut parts = rel.components();
+        let date = parts.next().unwrap().as_os_str().to_string_lossy().to_string();
+        assert_eq!(date.len(), 10, "expected a YYYY-MM-DD dir, got {}", date);
+        assert_eq!(
+            parts.next().unwrap().as_os_str().to_string_lossy(),
+            "a.cr3"
+        );
+        assert!(parts.next().is_none(), "structure must be flattened");
+    }
+
+    #[test]
+    fn build_plan_accepts_a_single_file_source() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path();
+        std::fs::create_dir_all(root.join("src")).unwrap();
+        let file = root.join("src/one.mov");
+        std::fs::write(&file, b"xy").unwrap();
+        let dest = root.join("dst");
+        std::fs::create_dir_all(&dest).unwrap();
+
+        let volumes = vec![disk("vol-1", root.to_str().unwrap())];
+        let plan = build_plan(vec![file], dest, &volumes).unwrap();
+
+        assert_eq!(plan.total_files, 1);
+        assert_eq!(plan.files[0].file_name, "one.mov");
+    }
+
+    #[test]
+    fn build_plan_marks_a_cross_volume_move() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path();
+        std::fs::create_dir_all(root.join("a")).unwrap();
+        std::fs::create_dir_all(root.join("b")).unwrap();
+        std::fs::write(root.join("a/x.jpg"), b"z").unwrap();
+
+        let volumes = vec![
+            disk("vol-a", root.join("a").to_str().unwrap()),
+            disk("vol-b", root.join("b").to_str().unwrap()),
+        ];
+        let plan = build_plan(vec![root.join("a/x.jpg")], root.join("b"), &volumes).unwrap();
+
+        assert_eq!(plan.source_device_id, "vol-a");
+        assert_eq!(plan.dest_device_id, "vol-b");
+        assert_eq!(plan.same_volume_count, 0);
+        assert!(!plan.files[0].same_volume);
+    }
+
+    #[test]
+    fn build_plan_rejects_sources_on_different_devices() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path();
+        std::fs::create_dir_all(root.join("a")).unwrap();
+        std::fs::create_dir_all(root.join("b")).unwrap();
+        std::fs::create_dir_all(root.join("c")).unwrap();
+        std::fs::write(root.join("a/x.jpg"), b"z").unwrap();
+        std::fs::write(root.join("b/y.jpg"), b"z").unwrap();
+
+        let volumes = vec![
+            disk("vol-a", root.join("a").to_str().unwrap()),
+            disk("vol-b", root.join("b").to_str().unwrap()),
+            disk("vol-c", root.join("c").to_str().unwrap()),
+        ];
+        let err = build_plan(
+            vec![root.join("a/x.jpg"), root.join("b/y.jpg")],
+            root.join("c"),
+            &volumes,
+        )
+        .unwrap_err();
+        assert!(err.to_string().contains("same device"));
+    }
+
+    #[test]
+    fn build_plan_rejects_an_unknown_device() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path();
+        std::fs::create_dir_all(root.join("src")).unwrap();
+        std::fs::write(root.join("src/x.jpg"), b"z").unwrap();
+        let err = build_plan(vec![root.join("src/x.jpg")], root.join("dst"), &[]).unwrap_err();
+        assert!(err.to_string().contains("No device"));
+    }
 
     #[test]
     fn date_dir_takes_the_date_part() {
