@@ -7,13 +7,14 @@ import { Devices } from "./pages/Devices";
 import { Scanner } from "./pages/Scanner";
 import { FileBrowser } from "./pages/FileBrowser";
 import { Import } from "./pages/Import";
+import { Move } from "./pages/Move";
 import { Projects } from "./pages/Projects";
 import { Transfer } from "./pages/Transfer";
 import { Backup } from "./pages/Backup";
 import { Similar } from "./pages/Similar";
 import "./App.css";
 
-type Page = "dashboard" | "devices" | "scanner" | "files" | "import" | "transfer" | "projects" | "backup" | "similar";
+type Page = "dashboard" | "devices" | "scanner" | "files" | "import" | "move" | "transfer" | "projects" | "backup" | "similar";
 
 function App() {
   const [page, setPage] = useState<Page>("dashboard");
@@ -98,6 +99,9 @@ function App() {
         <button className={page === "transfer" ? "active" : ""} onClick={() => setPage("transfer")}>
           Transfer
         </button>
+        <button className={page === "move" ? "active" : ""} onClick={() => setPage("move")}>
+          Move
+        </button>
         <button
           className={page === "projects" ? "active" : ""}
           onClick={() => { setOpenProject(undefined); setPage("projects"); }}
@@ -155,6 +159,9 @@ function App() {
         </div>
         <div className={page === "transfer" ? "contents-display" : "hidden-display"}>
           <Transfer project={transferProject} />
+        </div>
+        <div className={page === "move" ? "contents-display" : "hidden-display"}>
+          <Move />
         </div>
         {page === "projects" && (
           <Projects onTransferProject={handleTransferProject} initialProjectId={openProject} />
