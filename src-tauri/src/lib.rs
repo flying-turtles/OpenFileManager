@@ -6,6 +6,7 @@ mod error;
 mod hasher;
 mod importer;
 mod models;
+mod mover;
 mod network;
 mod scanner;
 mod similarity;

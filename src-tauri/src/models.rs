@@ -462,3 +462,61 @@ pub struct ReconnectCheck {
     pub found_files: i64,
     pub sampled_files: i64,
 }
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MoveFile {
+    pub source_path: String,
+    pub dest_path: String,
+    pub file_name: String,
+    pub file_size: i64,
+    pub modified_at: Option<String>,
+    pub same_volume: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MovePlan {
+    pub files: Vec<MoveFile>,
+    pub total_files: u64,
+    pub total_bytes: i64,
+    pub source_device_id: String,
+    pub source_mount: String,
+    pub source_roots: Vec<String>,
+    pub dest_device_id: String,
+    pub dest_mount: String,
+    pub dest_label: String,
+    pub same_volume_count: u64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MoveError {
+    pub source_path: String,
+    pub file_name: String,
+    pub error: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MoveResult {
+    pub moved: u64,
+    pub bytes_moved: i64,
+    pub failed: Vec<MoveError>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum MoveEvent {
+    #[serde(rename_all = "camelCase")]
+    Progress {
+        processed: u64,
+        total: u64,
+        bytes_moved: i64,
+        total_bytes: i64,
+        current_file: String,
+        phase: String,
+    },
+    FileFailed(MoveError),
+    Complete(MoveResult),
+    Cancelled,
+}
