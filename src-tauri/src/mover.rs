@@ -198,7 +198,7 @@ pub async fn copy_hashing(
     src: &Path,
     dest: &Path,
     cancel: &CancellationToken,
-    on_bytes: &mut dyn FnMut(i64),
+    on_bytes: &mut (dyn FnMut(i64) + Send),
 ) -> Result<Option<CopyOutcome>, AppError> {
     let reader = tokio::time::timeout(
         std::time::Duration::from_secs(30),

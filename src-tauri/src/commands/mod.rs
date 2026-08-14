@@ -2,6 +2,7 @@ mod backup;
 mod devices;
 pub mod files;
 mod import;
+mod move_files;
 mod network;
 mod preview;
 mod projects;
@@ -27,6 +28,8 @@ pub struct AppState {
     pub scan_target: Arc<Mutex<Option<String>>>,
     pub import_cancel_token: Arc<Mutex<Option<CancellationToken>>>,
     pub import_analysis: Arc<Mutex<Option<Arc<ImportAnalysis>>>>,
+    pub move_cancel_token: Arc<Mutex<Option<CancellationToken>>>,
+    pub move_plan: Arc<Mutex<Option<Arc<MovePlan>>>>,
     pub transfer_cancel_token: Arc<Mutex<Option<CancellationToken>>>,
     pub similar_cancel_token: Arc<Mutex<Option<CancellationToken>>>,
     pub verify_cancel_token: Arc<Mutex<Option<CancellationToken>>>,
@@ -65,6 +68,7 @@ pub use backup::*;
 pub use devices::*;
 pub use files::*;
 pub use import::*;
+pub use move_files::*;
 pub use network::*;
 pub use preview::*;
 pub use projects::*;
