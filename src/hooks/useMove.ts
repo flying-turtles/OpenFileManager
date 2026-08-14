@@ -3,7 +3,7 @@ import type { MovePlan, MoveEvent, MoveResult, MovePhase } from "../types";
 import { planMove, startMove, cancelMove } from "../api/commands";
 import { notifyDone } from "../utils/notify";
 
-export type MoveUiPhase = "idle" | "planning" | "planned" | "moving" | "complete";
+export type MoveUiPhase = "idle" | "planning" | "planned" | "moving" | "complete" | "cancelled";
 
 export interface MoveProgress {
   processed: number;
@@ -23,7 +23,8 @@ export function useMove() {
 
   const handleEvent = useCallback((event: MoveEvent) => {
     if (event === "Cancelled") {
-      setPhase("complete");
+      setPhase("cancelled");
+      setResult(null);
       return;
     }
     if ("Progress" in event) {
@@ -52,6 +53,7 @@ export function useMove() {
       setPhase("planned");
     } catch (e: any) {
       setErrors([String(e)]);
+      setPlan(null);
       setPhase("idle");
     }
   }, []);
@@ -60,10 +62,12 @@ export function useMove() {
     async (permanent: boolean) => {
       setPhase("moving");
       setErrors([]);
+      setProgress(null);
+      setResult(null);
       try {
         await startMove(permanent, handleEvent);
       } catch (e: any) {
-        setErrors([String(e)]);
+        setErrors(prev => [...prev, String(e)]);
         setPhase("planned");
       }
     },
