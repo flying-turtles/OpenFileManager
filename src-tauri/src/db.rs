@@ -1681,6 +1681,24 @@ pub async fn touch_full_hash_verified(pool: &DbPool, location_id: i64) -> Result
     Ok(())
 }
 
+pub async fn set_full_hash_by_device_and_path(
+    pool: &DbPool,
+    device_id: &str,
+    file_path: &str,
+    full_hash: &str,
+) -> Result<(), AppError> {
+    sqlx::query(
+        "UPDATE file_locations SET full_hash = ?, full_hash_verified_at = datetime('now')
+         WHERE device_id = ? AND file_path = ?",
+    )
+    .bind(full_hash)
+    .bind(device_id)
+    .bind(file_path)
+    .execute(pool)
+    .await?;
+    Ok(())
+}
+
 pub async fn update_network_drive_mount_point(
     pool: &DbPool,
     id: &str,

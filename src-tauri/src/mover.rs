@@ -248,6 +248,34 @@ pub async fn copy_hashing(
     }))
 }
 
+/// Remove directories left empty by a move, depth first. Returns true when
+/// `root` itself was removed. Files and non-empty directories are untouched.
+/// Blocking filesystem work — call from `spawn_blocking`.
+pub fn remove_empty_dirs(root: &Path) -> bool {
+    if !root.is_dir() {
+        return false;
+    }
+    let entries = match std::fs::read_dir(root) {
+        Ok(e) => e,
+        Err(_) => return false,
+    };
+    let mut empty = true;
+    for entry in entries.filter_map(|e| e.ok()) {
+        let path = entry.path();
+        if path.is_dir() {
+            if !remove_empty_dirs(&path) {
+                empty = false;
+            }
+        } else {
+            empty = false;
+        }
+    }
+    if empty {
+        return std::fs::remove_dir(root).is_ok();
+    }
+    false
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -522,5 +550,38 @@ mod tests {
 
         let dest_hash = crate::hasher::hash_file_full(&dst).await.unwrap();
         assert_ne!(dest_hash, outcome.full_hash);
+    }
+
+    #[test]
+    fn remove_empty_dirs_clears_a_fully_emptied_tree() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path().join("Shoot");
+        std::fs::create_dir_all(root.join("RAW/Sub")).unwrap();
+
+        assert!(remove_empty_dirs(&root));
+        assert!(!root.exists());
+    }
+
+    #[test]
+    fn remove_empty_dirs_keeps_directories_that_still_hold_files() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path().join("Shoot");
+        std::fs::create_dir_all(root.join("RAW")).unwrap();
+        std::fs::create_dir_all(root.join("Empty")).unwrap();
+        std::fs::write(root.join("RAW/left.cr3"), b"x").unwrap();
+
+        assert!(!remove_empty_dirs(&root));
+        assert!(root.join("RAW/left.cr3").exists());
+        assert!(!root.join("Empty").exists(), "empty branches still go");
+    }
+
+    #[test]
+    fn remove_empty_dirs_ignores_a_file_root() {
+        let tmp = tempfile::tempdir().unwrap();
+        let file = tmp.path().join("one.mov");
+        std::fs::write(&file, b"x").unwrap();
+
+        assert!(!remove_empty_dirs(&file));
+        assert!(file.exists());
     }
 }
