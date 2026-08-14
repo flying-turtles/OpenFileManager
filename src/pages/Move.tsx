@@ -15,6 +15,16 @@ const parentPath = (path: string) => {
   return idx > 0 ? trimmed.slice(0, idx) : "/";
 };
 
+// Longest-prefix match, mirroring devices::device_for_path on the Rust side —
+// a first-match would let a device mounted at "/" shadow any deeper device.
+const longestMatchingMount = (candidates: { mountPoint: string }[], path: string): string =>
+  candidates.reduce((best, d) => {
+    if (path.startsWith(d.mountPoint) && d.mountPoint.length > best.length) {
+      return d.mountPoint;
+    }
+    return best;
+  }, "");
+
 interface PaneProps {
   title: string;
   path: string;
@@ -58,7 +68,7 @@ function Pane({ title, path, onPathChange, selected, onToggle, refreshKey }: Pan
     <div className="move-pane">
       <h3>{title}</h3>
       <select
-        value={connected.find((d) => path.startsWith(d.mountPoint))?.mountPoint ?? ""}
+        value={longestMatchingMount(connected, path)}
         onChange={(e) => onPathChange(e.target.value)}
       >
         <option value="">Select device...</option>
@@ -184,6 +194,12 @@ export function Move() {
           >
             Move →
           </button>
+
+          {phase === "planning" && (
+            <div className="move-progress">
+              <span className="text-muted-color">Planning move…</span>
+            </div>
+          )}
 
           {phase === "planned" && plan && (
             <div className="move-plan">
