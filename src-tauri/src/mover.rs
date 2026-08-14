@@ -252,7 +252,12 @@ pub async fn copy_hashing(
 /// `root` itself was removed. Files and non-empty directories are untouched.
 /// Blocking filesystem work — call from `spawn_blocking`.
 pub fn remove_empty_dirs(root: &Path) -> bool {
-    if !root.is_dir() {
+    // Use symlink_metadata to check if it's a directory WITHOUT following symlinks.
+    let metadata = match std::fs::symlink_metadata(root) {
+        Ok(m) => m,
+        Err(_) => return false,
+    };
+    if !metadata.is_dir() {
         return false;
     }
     let entries = match std::fs::read_dir(root) {
@@ -260,14 +265,32 @@ pub fn remove_empty_dirs(root: &Path) -> bool {
         Err(_) => return false,
     };
     let mut empty = true;
-    for entry in entries.filter_map(|e| e.ok()) {
+    for entry_result in entries {
+        // Treat entry read errors as making the parent non-empty.
+        let entry = match entry_result {
+            Ok(e) => e,
+            Err(_) => {
+                empty = false;
+                continue;
+            }
+        };
         let path = entry.path();
-        if path.is_dir() {
-            if !remove_empty_dirs(&path) {
+        // Use symlink_metadata to not follow symlinks. Symlinks (even to dirs)
+        // are treated as non-directory entries.
+        match std::fs::symlink_metadata(&path) {
+            Ok(meta) if meta.is_dir() => {
+                if !remove_empty_dirs(&path) {
+                    empty = false;
+                }
+            }
+            Ok(_) => {
+                // File or symlink: parent is not empty.
                 empty = false;
             }
-        } else {
-            empty = false;
+            Err(_) => {
+                // Unreadable entry: conservatively treat as non-empty.
+                empty = false;
+            }
         }
     }
     if empty {
@@ -583,5 +606,35 @@ mod tests {
 
         assert!(!remove_empty_dirs(&file));
         assert!(file.exists());
+    }
+
+    #[test]
+    fn remove_empty_dirs_does_not_follow_symlinks_to_delete_outside_tree() {
+        use std::os::unix::fs::symlink;
+
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path();
+
+        // Create an external tree with an empty child.
+        let outside = root.join("outside");
+        let empty_child = outside.join("empty-child");
+        std::fs::create_dir_all(&empty_child).unwrap();
+
+        // Create a source tree with a symlink pointing to the outside tree.
+        let source = root.join("source");
+        std::fs::create_dir(&source).unwrap();
+        symlink(&outside, source.join("link-to-outside")).unwrap();
+
+        // Remove empty dirs from source tree.
+        assert!(!remove_empty_dirs(&source));
+
+        // The external empty-child must still exist — it should not be deleted
+        // even though it was reachable through the symlink.
+        assert!(
+            empty_child.exists(),
+            "external directory must not be deleted through symlink"
+        );
+        // The symlink itself must still exist.
+        assert!(source.join("link-to-outside").exists());
     }
 }
