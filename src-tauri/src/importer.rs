@@ -43,6 +43,18 @@ pub async fn copy_file_cancellable(
     Ok(true)
 }
 
+/// Base directory that analysis paths are made relative to.
+/// A source can be a folder or a single file; for a file the base is its
+/// parent, otherwise `strip_prefix` against the file itself yields an empty
+/// relative path.
+fn relative_base(source: &Path, is_file: bool) -> PathBuf {
+    if is_file {
+        source.parent().unwrap_or(source).to_path_buf()
+    } else {
+        source.to_path_buf()
+    }
+}
+
 pub async fn analyze_sd_card(
     pool: DbPool,
     sd_mount: PathBuf,
@@ -59,6 +71,12 @@ pub async fn analyze_sd_card(
         .find(|v| v.id == device_id)
         .map(|v| v.label.clone())
         .unwrap_or_else(|| "SD Card".to_string());
+
+    let source_is_file = tokio::fs::metadata(&sd_mount)
+        .await
+        .map(|m| m.is_file())
+        .unwrap_or(false);
+    let base = relative_base(&sd_mount, source_is_file);
 
     let files: Vec<PathBuf> = WalkBuilder::new(&sd_mount)
         .hidden(true)
@@ -109,7 +127,7 @@ pub async fn analyze_sd_card(
             .map(|dt| dt.format("%Y-%m-%d %H:%M:%S").to_string());
 
         let relative_path = file_path
-            .strip_prefix(&sd_mount)
+            .strip_prefix(&base)
             .unwrap_or(file_path)
             .to_string_lossy()
             .to_string();
@@ -421,4 +439,27 @@ pub async fn run_import(
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn folder_source_is_its_own_base() {
+        let src = Path::new("/Volumes/SD/DCIM");
+        assert_eq!(relative_base(src, false), PathBuf::from("/Volumes/SD/DCIM"));
+    }
+
+    #[test]
+    fn file_source_bases_on_parent() {
+        let src = Path::new("/Volumes/SD/DCIM/IMG_0001.CR3");
+        let base = relative_base(src, true);
+        assert_eq!(base, PathBuf::from("/Volumes/SD/DCIM"));
+        assert_eq!(
+            src.strip_prefix(&base).unwrap(),
+            Path::new("IMG_0001.CR3"),
+            "single-file import must keep a non-empty relative path"
+        );
+    }
 }
