@@ -3,7 +3,7 @@ import { useMove } from "../hooks/useMove";
 import { useDevices } from "../hooks/useDevices";
 import { browseDirectory } from "../api/commands";
 import { formatBytes } from "../utils/format";
-import type { DirEntry } from "../types";
+import type { DirEntry, StorageDevice } from "../types";
 import "./Move.css";
 
 const joinPath = (dir: string, name: string) =>
@@ -29,16 +29,18 @@ interface PaneProps {
   title: string;
   path: string;
   onPathChange: (path: string) => void;
+  // Passed down rather than fetched per pane: <Move /> stays mounted for the
+  // life of the app, so a useDevices() per pane meant two extra device
+  // detections (DB writes plus a reachability probe each) on every start.
+  connected: StorageDevice[];
   selected?: Set<string>;
   onToggle?: (fullPath: string) => void;
   refreshKey: number;
 }
 
-function Pane({ title, path, onPathChange, selected, onToggle, refreshKey }: PaneProps) {
-  const { devices } = useDevices();
+function Pane({ title, path, onPathChange, connected, selected, onToggle, refreshKey }: PaneProps) {
   const [entries, setEntries] = useState<DirEntry[]>([]);
   const [error, setError] = useState("");
-  const connected = devices.filter((d) => d.isConnected);
 
   useEffect(() => {
     if (!path) {
@@ -126,6 +128,8 @@ function Pane({ title, path, onPathChange, selected, onToggle, refreshKey }: Pan
 }
 
 export function Move() {
+  const { devices } = useDevices();
+  const connected = devices.filter((d) => d.isConnected);
   const { phase, plan, progress, result, errors, createPlan, start, cancel, reset } =
     useMove();
   const [sourcePath, setSourcePath] = useState("");
@@ -167,6 +171,7 @@ export function Move() {
 
       <div className="move-layout">
         <Pane
+          connected={connected}
           title="Source"
           path={sourcePath}
           onPathChange={changeSourcePath}
@@ -296,6 +301,7 @@ export function Move() {
         </div>
 
         <Pane
+          connected={connected}
           title="Destination"
           path={destPath}
           onPathChange={setDestPath}

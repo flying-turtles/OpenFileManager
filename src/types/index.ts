@@ -321,24 +321,13 @@ export interface ReconnectCheck {
   sampledFiles: number;
 }
 
-export interface MoveFile {
-  sourcePath: string;
-  destPath: string;
-  fileName: string;
-  fileSize: number;
-  modifiedAt: string | null;
-  sameVolume: boolean;
-}
-
-export interface MovePlan {
-  files: MoveFile[];
+/// What `plan_move` returns. The per-file list stays in the Rust AppState —
+/// shipping it would mean tens of megabytes of JSON for a large folder.
+export interface MovePlanSummary {
   totalFiles: number;
   totalBytes: number;
   sourceDeviceId: string;
-  sourceMount: string;
-  sourceRoots: string[];
   destDeviceId: string;
-  destMount: string;
   destLabel: string;
   sameVolumeCount: number;
 }

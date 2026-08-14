@@ -489,6 +489,33 @@ pub struct MovePlan {
     pub same_volume_count: u64,
 }
 
+/// What the frontend needs to describe a planned move. The full `MovePlan`
+/// stays in `AppState` — a 100k-file folder would otherwise ship tens of
+/// megabytes of per-file JSON across the IPC boundary for four aggregates.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MovePlanSummary {
+    pub total_files: u64,
+    pub total_bytes: i64,
+    pub source_device_id: String,
+    pub dest_device_id: String,
+    pub dest_label: String,
+    pub same_volume_count: u64,
+}
+
+impl From<&MovePlan> for MovePlanSummary {
+    fn from(plan: &MovePlan) -> Self {
+        Self {
+            total_files: plan.total_files,
+            total_bytes: plan.total_bytes,
+            source_device_id: plan.source_device_id.clone(),
+            dest_device_id: plan.dest_device_id.clone(),
+            dest_label: plan.dest_label.clone(),
+            same_volume_count: plan.same_volume_count,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct MoveError {

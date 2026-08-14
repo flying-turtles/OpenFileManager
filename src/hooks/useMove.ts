@@ -1,5 +1,5 @@
 import { useState, useCallback } from "react";
-import type { MovePlan, MoveEvent, MoveResult, MovePhase } from "../types";
+import type { MovePlanSummary, MoveEvent, MoveResult, MovePhase } from "../types";
 import { planMove, startMove, cancelMove } from "../api/commands";
 import { notifyDone } from "../utils/notify";
 
@@ -16,7 +16,7 @@ export interface MoveProgress {
 
 export function useMove() {
   const [phase, setPhase] = useState<MoveUiPhase>("idle");
-  const [plan, setPlan] = useState<MovePlan | null>(null);
+  const [plan, setPlan] = useState<MovePlanSummary | null>(null);
   const [progress, setProgress] = useState<MoveProgress | null>(null);
   const [result, setResult] = useState<MoveResult | null>(null);
   const [errors, setErrors] = useState<string[]>([]);

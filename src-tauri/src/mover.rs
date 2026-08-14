@@ -71,6 +71,28 @@ pub fn validate_roots(sources: &[PathBuf], dest: &Path) -> Result<(), AppError> 
     Ok(())
 }
 
+/// Drop sources contained within another selected source. Selecting a folder
+/// and something inside it is natural in a checkbox list, but the walk would
+/// then reach the inner file twice and plan two destinations for it — the
+/// second of which fails at execution because the source has already moved.
+pub fn prune_nested_sources(sources: Vec<PathBuf>) -> Vec<PathBuf> {
+    let mut seen: HashSet<PathBuf> = HashSet::new();
+    let unique: Vec<PathBuf> = sources
+        .into_iter()
+        .filter(|p| seen.insert(p.clone()))
+        .collect();
+
+    unique
+        .iter()
+        .filter(|candidate| {
+            !unique
+                .iter()
+                .any(|other| other != *candidate && candidate.starts_with(other))
+        })
+        .cloned()
+        .collect()
+}
+
 /// Walk the selected sources and assign every file a dated destination.
 /// Blocking filesystem work — call from `spawn_blocking`.
 pub fn build_plan(
@@ -79,6 +101,7 @@ pub fn build_plan(
     volumes: &[DetectedDisk],
 ) -> Result<MovePlan, AppError> {
     validate_roots(&sources, &dest)?;
+    let sources = prune_nested_sources(sources);
 
     let dest_str = dest.to_string_lossy().to_string();
     let (dest_device_id, dest_mount) = devices::device_for_path(volumes, &dest_str)
@@ -1649,5 +1672,163 @@ mod tests {
             orphans.is_empty(),
             "cleanup_orphaned_files must still run on a cancelled run"
         );
+    }
+
+    #[test]
+    fn prune_nested_sources_drops_children_of_a_selected_folder() {
+        let pruned = prune_nested_sources(vec![
+            PathBuf::from("/v/Shoot"),
+            PathBuf::from("/v/Shoot/RAW/a.cr3"),
+            PathBuf::from("/v/Other.mov"),
+        ]);
+        assert_eq!(
+            pruned,
+            vec![PathBuf::from("/v/Shoot"), PathBuf::from("/v/Other.mov")]
+        );
+    }
+
+    #[test]
+    fn prune_nested_sources_keeps_siblings_with_a_shared_name_prefix() {
+        // "/v/Backup2" starts with the string "/v/Backup" but is not inside it.
+        let sources = vec![PathBuf::from("/v/Backup"), PathBuf::from("/v/Backup2")];
+        assert_eq!(prune_nested_sources(sources.clone()), sources);
+    }
+
+    #[test]
+    fn prune_nested_sources_collapses_exact_duplicates() {
+        let pruned = prune_nested_sources(vec![
+            PathBuf::from("/v/a.cr3"),
+            PathBuf::from("/v/a.cr3"),
+        ]);
+        assert_eq!(pruned, vec![PathBuf::from("/v/a.cr3")]);
+    }
+
+    #[tokio::test]
+    async fn build_plan_plans_a_nested_selection_only_once() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path();
+        let shoot = root.join("src/Shoot");
+        std::fs::create_dir_all(&shoot).unwrap();
+        std::fs::write(shoot.join("a.cr3"), b"x").unwrap();
+        let dest = root.join("dst");
+        std::fs::create_dir_all(&dest).unwrap();
+
+        let volumes = vec![disk("vol-1", root.to_str().unwrap())];
+        // The user ticked the folder AND the file inside it.
+        let plan = build_plan(
+            vec![shoot.clone(), shoot.join("a.cr3")],
+            dest,
+            &volumes,
+        )
+        .unwrap();
+
+        assert_eq!(plan.total_files, 1, "a nested selection must not double-plan");
+        assert_eq!(plan.total_bytes, 1);
+    }
+
+    /// A bystander file sitting at the planned destination survives a move
+    /// whose source has vanished. Two separate guarantees combine to protect
+    /// it: execution-time re-resolution routes the move to a suffixed path, so
+    /// the bystander is never the `dest` under consideration, and `copy_hashing`
+    /// only removes a destination it created. Reintroducing the old
+    /// unconditional `remove_file(&dest)` in run_move's copy-`Err` arm does NOT
+    /// fail this test — re-resolution alone already saves the bystander — so
+    /// this pins the user-visible guarantee, not that single line. The
+    /// ownership rule itself is pinned by
+    /// `copy_hashing_removes_the_destination_it_created_when_the_copy_fails`.
+    #[tokio::test]
+    async fn run_move_leaves_a_bystander_at_the_planned_destination_alone() {
+        let tmp = tempfile::tempdir().unwrap();
+        let src_mount = tmp.path().join("src");
+        let dst_mount = tmp.path().join("dst");
+        std::fs::create_dir_all(&src_mount).unwrap();
+        std::fs::create_dir_all(dst_mount.join("2026-03-14")).unwrap();
+
+        // Planned source, gone by the time the move runs.
+        let src_file = src_mount.join("a.cr3");
+        // Something else already occupies the planned destination — e.g. an
+        // Import that landed the same name between plan and confirm.
+        let occupied = dst_mount.join("2026-03-14/a.cr3");
+        std::fs::write(&occupied, b"someone else's bytes").unwrap();
+
+        let pool = test_pool().await;
+        db::upsert_device(&pool, &disk("vol-src", src_mount.to_str().unwrap()))
+            .await
+            .unwrap();
+        db::upsert_device(&pool, &disk("vol-dst", dst_mount.to_str().unwrap()))
+            .await
+            .unwrap();
+
+        let plan = plan_for(
+            vec![MoveFile {
+                source_path: src_file.to_string_lossy().to_string(),
+                dest_path: occupied.to_string_lossy().to_string(),
+                file_name: "a.cr3".into(),
+                file_size: 11,
+                modified_at: Some("2026-03-14 09:00:00".into()),
+                same_volume: false,
+            }],
+            src_mount.to_str().unwrap(),
+            dst_mount.to_str().unwrap(),
+        );
+
+        let channel = test_channel();
+        let result = run_move(pool, plan, true, channel, CancellationToken::new())
+            .await
+            .unwrap();
+
+        assert_eq!(result.moved, 0);
+        assert_eq!(result.failed.len(), 1);
+        assert_eq!(
+            std::fs::read(&occupied).unwrap(),
+            b"someone else's bytes",
+            "a copy failure must never destroy a file the move did not write"
+        );
+    }
+
+    #[tokio::test]
+    async fn run_move_trashes_the_source_by_default() {
+        let tmp = tempfile::tempdir().unwrap();
+        let src_mount = tmp.path().join("src");
+        let dst_mount = tmp.path().join("dst");
+        std::fs::create_dir_all(&src_mount).unwrap();
+        std::fs::create_dir_all(&dst_mount).unwrap();
+        // Named so it is identifiable if a developer inspects their Trash.
+        let src_file = src_mount.join("ofm-move-trash-test.cr3");
+        std::fs::write(&src_file, b"trash me").unwrap();
+
+        let pool = test_pool().await;
+        db::upsert_device(&pool, &disk("vol-src", src_mount.to_str().unwrap()))
+            .await
+            .unwrap();
+        db::upsert_device(&pool, &disk("vol-dst", dst_mount.to_str().unwrap()))
+            .await
+            .unwrap();
+
+        let dest_path = dst_mount.join("2026-03-14/ofm-move-trash-test.cr3");
+        let plan = plan_for(
+            vec![MoveFile {
+                source_path: src_file.to_string_lossy().to_string(),
+                dest_path: dest_path.to_string_lossy().to_string(),
+                file_name: "ofm-move-trash-test.cr3".into(),
+                file_size: 8,
+                modified_at: Some("2026-03-14 09:00:00".into()),
+                same_volume: false,
+            }],
+            src_mount.to_str().unwrap(),
+            dst_mount.to_str().unwrap(),
+        );
+
+        // permanent = false: the shipped default, which routes through
+        // remove_from_disk -> trash::delete rather than fs::remove_file.
+        let channel = test_channel();
+        let result = run_move(pool, plan, false, channel, CancellationToken::new())
+            .await
+            .unwrap();
+
+        assert_eq!(result.moved, 1);
+        assert!(result.failed.is_empty());
+        assert!(!src_file.exists(), "source must leave its original path");
+        assert_eq!(std::fs::read(&dest_path).unwrap(), b"trash me");
     }
 }

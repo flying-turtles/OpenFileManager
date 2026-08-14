@@ -14,7 +14,7 @@ pub async fn plan_move(
     state: State<'_, AppState>,
     sources: Vec<String>,
     dest: String,
-) -> Result<MovePlan, AppError> {
+) -> Result<MovePlanSummary, AppError> {
     if sources.is_empty() {
         return Err(AppError::General("No source selected".into()));
     }
@@ -52,8 +52,9 @@ pub async fn plan_move(
         }
     }
 
-    *state.move_plan.lock().await = Some(Arc::new(plan.clone()));
-    Ok(plan)
+    let summary = MovePlanSummary::from(&plan);
+    *state.move_plan.lock().await = Some(Arc::new(plan));
+    Ok(summary)
 }
 
 #[tauri::command]

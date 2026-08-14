@@ -28,7 +28,7 @@ import type {
   SimilarScanEvent,
   VerifyEvent,
   ReconnectCheck,
-  MovePlan,
+  MovePlanSummary,
   MoveEvent,
 } from "../types";
 
@@ -434,7 +434,7 @@ export async function cancelVerify(): Promise<void> {
 export async function planMove(
   sources: string[],
   dest: string
-): Promise<MovePlan> {
+): Promise<MovePlanSummary> {
   return invoke("plan_move", { sources, dest });
 }
 
