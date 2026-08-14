@@ -28,6 +28,8 @@ import type {
   SimilarScanEvent,
   VerifyEvent,
   ReconnectCheck,
+  MovePlan,
+  MoveEvent,
 } from "../types";
 
 export async function detectDevices(): Promise<StorageDevice[]> {
@@ -427,4 +429,24 @@ export async function verifyDevice(
 
 export async function cancelVerify(): Promise<void> {
   return invoke("cancel_verify");
+}
+
+export async function planMove(
+  sources: string[],
+  dest: string
+): Promise<MovePlan> {
+  return invoke("plan_move", { sources, dest });
+}
+
+export async function startMove(
+  permanent: boolean,
+  onEvent: (event: MoveEvent) => void
+): Promise<void> {
+  const channel = new Channel<MoveEvent>();
+  channel.onmessage = onEvent;
+  return invoke("start_move", { permanent, onEvent: channel });
+}
+
+export async function cancelMove(): Promise<void> {
+  return invoke("cancel_move");
 }

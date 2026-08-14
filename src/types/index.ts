@@ -320,3 +320,54 @@ export interface ReconnectCheck {
   foundFiles: number;
   sampledFiles: number;
 }
+
+export interface MoveFile {
+  sourcePath: string;
+  destPath: string;
+  fileName: string;
+  fileSize: number;
+  modifiedAt: string | null;
+  sameVolume: boolean;
+}
+
+export interface MovePlan {
+  files: MoveFile[];
+  totalFiles: number;
+  totalBytes: number;
+  sourceDeviceId: string;
+  sourceMount: string;
+  sourceRoots: string[];
+  destDeviceId: string;
+  destMount: string;
+  destLabel: string;
+  sameVolumeCount: number;
+}
+
+export interface MoveErrorItem {
+  sourcePath: string;
+  fileName: string;
+  error: string;
+}
+
+export interface MoveResult {
+  moved: number;
+  bytesMoved: number;
+  failed: MoveErrorItem[];
+}
+
+export type MovePhase = "copying" | "verifying" | "deleting";
+
+export type MoveEvent =
+  | {
+      Progress: {
+        processed: number;
+        total: number;
+        bytesMoved: number;
+        totalBytes: number;
+        currentFile: string;
+        phase: MovePhase;
+      };
+    }
+  | { FileFailed: MoveErrorItem }
+  | { Complete: MoveResult }
+  | "Cancelled";
