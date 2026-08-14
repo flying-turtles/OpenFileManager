@@ -3,6 +3,8 @@ use std::path::{Path, PathBuf};
 use std::time::SystemTime;
 
 use ignore::WalkBuilder;
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use tokio_util::sync::CancellationToken;
 
 use crate::devices;
 use crate::error::AppError;
@@ -172,6 +174,78 @@ pub fn build_plan(
         dest_label,
         same_volume_count,
     })
+}
+
+/// Hashes produced while streaming a file to its destination.
+pub struct CopyOutcome {
+    /// blake3 over every byte — the verification hash.
+    pub full_hash: String,
+    /// blake3 over the first 4 MB — the index's `blake3_hash` identity.
+    pub partial_hash: String,
+    pub bytes: i64,
+}
+
+const PARTIAL_WINDOW: u64 = 4 * 1024 * 1024;
+
+/// Copy `src` to `dest`, hashing the source stream as it goes so the source
+/// is read exactly once. Returns `Ok(None)` if cancelled, after removing the
+/// partial destination file.
+pub async fn copy_hashing(
+    src: &Path,
+    dest: &Path,
+    cancel: &CancellationToken,
+    on_bytes: &mut dyn FnMut(i64),
+) -> Result<Option<CopyOutcome>, AppError> {
+    let reader = tokio::time::timeout(
+        std::time::Duration::from_secs(30),
+        tokio::fs::File::open(src),
+    )
+    .await
+    .map_err(|_| AppError::General(format!("Timeout opening {}", src.display())))??;
+
+    let mut reader = tokio::io::BufReader::with_capacity(1024 * 1024, reader);
+    let mut writer = tokio::fs::File::create(dest).await?;
+
+    let mut full = blake3::Hasher::new();
+    let mut partial = blake3::Hasher::new();
+    let mut partial_remaining = PARTIAL_WINDOW;
+    let mut buf = vec![0u8; 1024 * 1024];
+    let mut bytes: i64 = 0;
+
+    loop {
+        let n = tokio::select! {
+            _ = cancel.cancelled() => {
+                drop(writer);
+                let _ = tokio::fs::remove_file(dest).await;
+                return Ok(None);
+            }
+            result = reader.read(&mut buf) => result?,
+        };
+        if n == 0 {
+            break;
+        }
+
+        writer.write_all(&buf[..n]).await?;
+        full.update(&buf[..n]);
+        if partial_remaining > 0 {
+            let take = (partial_remaining as usize).min(n);
+            partial.update(&buf[..take]);
+            partial_remaining -= take as u64;
+        }
+        bytes += n as i64;
+        on_bytes(n as i64);
+    }
+
+    // sync_all forces the SMB server to acknowledge the write — a silent
+    // finalize failure would leave an index row for bytes that never landed.
+    writer.flush().await?;
+    writer.sync_all().await?;
+
+    Ok(Some(CopyOutcome {
+        full_hash: full.finalize().to_hex().to_string(),
+        partial_hash: partial.finalize().to_hex().to_string(),
+        bytes,
+    }))
 }
 
 #[cfg(test)]
@@ -369,5 +443,84 @@ mod tests {
             Path::new("/Volumes/SD/Archive"),
         )
         .is_ok());
+    }
+
+    #[tokio::test]
+    async fn copy_hashing_writes_the_file_and_reports_both_hashes() {
+        let tmp = tempfile::tempdir().unwrap();
+        let src = tmp.path().join("src.bin");
+        let dst = tmp.path().join("dst.bin");
+        let payload = vec![7u8; 5 * 1024 * 1024]; // larger than the 4MB partial window
+        std::fs::write(&src, &payload).unwrap();
+
+        let token = CancellationToken::new();
+        let mut seen: i64 = 0;
+        let outcome = copy_hashing(&src, &dst, &token, &mut |n| seen += n)
+            .await
+            .unwrap()
+            .expect("not cancelled");
+
+        assert_eq!(outcome.bytes, payload.len() as i64);
+        assert_eq!(seen, payload.len() as i64);
+        assert_eq!(std::fs::read(&dst).unwrap(), payload);
+
+        let expected_full = crate::hasher::hash_file_full_sync(&src).unwrap();
+        let expected_partial =
+            crate::hasher::hash_file_partial_sync(&src, 4 * 1024 * 1024).unwrap();
+        assert_eq!(outcome.full_hash, expected_full);
+        assert_eq!(outcome.partial_hash, expected_partial);
+        assert_ne!(
+            outcome.full_hash, outcome.partial_hash,
+            "a >4MB file must hash differently in full and partial form"
+        );
+    }
+
+    #[tokio::test]
+    async fn copy_hashing_removes_the_destination_when_cancelled() {
+        let tmp = tempfile::tempdir().unwrap();
+        let src = tmp.path().join("src.bin");
+        let dst = tmp.path().join("dst.bin");
+        std::fs::write(&src, vec![1u8; 4 * 1024 * 1024]).unwrap();
+
+        let token = CancellationToken::new();
+        token.cancel();
+        let outcome = copy_hashing(&src, &dst, &token, &mut |_| {}).await.unwrap();
+
+        assert!(outcome.is_none());
+        assert!(!dst.exists(), "partial destination must not survive a cancel");
+    }
+
+    #[tokio::test]
+    async fn verified_destination_matches_the_source_hash() {
+        let tmp = tempfile::tempdir().unwrap();
+        let src = tmp.path().join("src.bin");
+        let dst = tmp.path().join("dst.bin");
+        std::fs::write(&src, b"payload bytes").unwrap();
+
+        let token = CancellationToken::new();
+        let outcome = copy_hashing(&src, &dst, &token, &mut |_| {})
+            .await
+            .unwrap()
+            .unwrap();
+        let dest_hash = crate::hasher::hash_file_full(&dst).await.unwrap();
+        assert_eq!(dest_hash, outcome.full_hash);
+    }
+
+    #[tokio::test]
+    async fn a_corrupted_destination_fails_verification() {
+        let tmp = tempfile::tempdir().unwrap();
+        let src = tmp.path().join("src.bin");
+        let dst = tmp.path().join("dst.bin");
+        std::fs::write(&src, b"payload bytes").unwrap();
+
+        let token = CancellationToken::new();
+        let outcome = copy_hashing(&src, &dst, &token, &mut |_| {})
+            .await
+            .unwrap()
+            .unwrap();
+        std::fs::write(&dst, b"payload bytez").unwrap();
+
+        let dest_hash = crate::hasher::hash_file_full(&dst).await.unwrap();
+        assert_ne!(dest_hash, outcome.full_hash);
     }
 }
