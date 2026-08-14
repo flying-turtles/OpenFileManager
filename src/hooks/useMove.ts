@@ -22,9 +22,10 @@ export function useMove() {
   const [errors, setErrors] = useState<string[]>([]);
 
   const handleEvent = useCallback((event: MoveEvent) => {
-    if (event === "Cancelled") {
+    if ("Cancelled" in event) {
+      // Keep the partial tally: the page shows what the cancelled run moved.
+      setResult(event.Cancelled);
       setPhase("cancelled");
-      setResult(null);
       return;
     }
     if ("Progress" in event) {

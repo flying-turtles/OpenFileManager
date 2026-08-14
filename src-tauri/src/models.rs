@@ -518,5 +518,6 @@ pub enum MoveEvent {
     },
     FileFailed(MoveError),
     Complete(MoveResult),
-    Cancelled,
+    /// Carries the partial result: a cancelled run still reports what it moved.
+    Cancelled(MoveResult),
 }

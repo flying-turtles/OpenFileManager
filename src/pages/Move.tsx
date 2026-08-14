@@ -208,7 +208,10 @@ export function Move() {
               </div>
               <div className="text-muted-color">to {plan.destLabel}</div>
               {plan.sameVolumeCount === plan.totalFiles && plan.totalFiles > 0 && (
-                <div className="text-muted-color">Same volume — instant move</div>
+                <div className="text-muted-color">
+                  Same volume — renames in place, no copying (reads 4 MB per file
+                  to index it)
+                </div>
               )}
               <div className="move-plan-actions">
                 <button className="btn-primary" onClick={() => start(permanent)}>
@@ -246,6 +249,24 @@ export function Move() {
           {phase === "cancelled" && (
             <div className="move-result">
               <div>Move cancelled.</div>
+              {result && (
+                <>
+                  <div>
+                    {result.moved} moved ({formatBytes(result.bytesMoved)}) before
+                    cancelling
+                  </div>
+                  {result.failed.length > 0 && (
+                    <div className="move-failures">
+                      <strong>{result.failed.length} failed</strong>
+                      {result.failed.map((f, i) => (
+                        <div key={i} className="move-failure">
+                          {f.fileName}: {f.error}
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </>
+              )}
               <button className="btn-primary" onClick={finish}>
                 Done
               </button>

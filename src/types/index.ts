@@ -370,4 +370,6 @@ export type MoveEvent =
     }
   | { FileFailed: MoveErrorItem }
   | { Complete: MoveResult }
-  | "Cancelled";
+  // Unlike the other event unions, Move's Cancelled carries the partial
+  // result — a cancelled run reports what it completed.
+  | { Cancelled: MoveResult };

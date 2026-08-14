@@ -192,8 +192,17 @@ pub struct CopyOutcome {
 const PARTIAL_WINDOW: u64 = 4 * 1024 * 1024;
 
 /// Copy `src` to `dest`, hashing the source stream as it goes so the source
-/// is read exactly once. Returns `Ok(None)` if cancelled, after removing the
-/// partial destination file.
+/// is read exactly once. Returns `Ok(None)` if cancelled.
+///
+/// Destination ownership: everything up to and including `File::create` can
+/// fail without this call having touched `dest` (a 30 s source-open timeout, a
+/// missing or unreadable source), and those failures must leave whatever is at
+/// `dest` — a file some other part of the app just wrote there — untouched.
+/// Once `File::create` succeeds this call owns `dest` and removes it on any
+/// failure or cancellation; a successful return hands that ownership to the
+/// caller, which is then responsible for cleaning up after a failed verify.
+/// The cleanup is single-owned at every instant: the caller never removes a
+/// destination this function might not have created.
 pub async fn copy_hashing(
     src: &Path,
     dest: &Path,
@@ -207,9 +216,28 @@ pub async fn copy_hashing(
     .await
     .map_err(|_| AppError::General(format!("Timeout opening {}", src.display())))??;
 
-    let mut reader = tokio::io::BufReader::with_capacity(1024 * 1024, reader);
-    let mut writer = tokio::fs::File::create(dest).await?;
+    let reader = tokio::io::BufReader::with_capacity(1024 * 1024, reader);
+    let writer = tokio::fs::File::create(dest).await?;
 
+    match stream_hashing(reader, writer, cancel, on_bytes).await {
+        Ok(Some(outcome)) => Ok(Some(outcome)),
+        // Cancelled or failed after the destination was created: remove the
+        // partial file this call is responsible for.
+        other => {
+            let _ = tokio::fs::remove_file(dest).await;
+            other
+        }
+    }
+}
+
+/// The streaming half of `copy_hashing`, split out so the destination file it
+/// writes into is created — and therefore owned — by exactly one place.
+async fn stream_hashing(
+    mut reader: tokio::io::BufReader<tokio::fs::File>,
+    mut writer: tokio::fs::File,
+    cancel: &CancellationToken,
+    on_bytes: &mut (dyn FnMut(i64) + Send),
+) -> Result<Option<CopyOutcome>, AppError> {
     let mut full = blake3::Hasher::new();
     let mut partial = blake3::Hasher::new();
     let mut partial_remaining = PARTIAL_WINDOW;
@@ -218,11 +246,7 @@ pub async fn copy_hashing(
 
     loop {
         let n = tokio::select! {
-            _ = cancel.cancelled() => {
-                drop(writer);
-                let _ = tokio::fs::remove_file(dest).await;
-                return Ok(None);
-            }
+            _ = cancel.cancelled() => return Ok(None),
             result = reader.read(&mut buf) => result?,
         };
         if n == 0 {
@@ -336,11 +360,15 @@ pub async fn run_move(
     let mut bytes_moved: i64 = 0;
     let mut failed: Vec<MoveError> = Vec::new();
     let mut processed: u64 = 0;
+    // Set instead of returning early: a cancelled run still owes the caller
+    // the tally of what it did move, and still owes the disk and the index the
+    // end-of-run sweep below.
+    let mut cancelled = false;
 
     for file in &plan.files {
         if cancel.is_cancelled() {
-            let _ = channel.send(MoveEvent::Cancelled);
-            return Ok(MoveResult { moved, bytes_moved, failed });
+            cancelled = true;
+            break;
         }
 
         let source = PathBuf::from(&file.source_path);
@@ -365,13 +393,44 @@ pub async fn run_move(
             phase: "copying".into(),
         });
 
-        if let Some(parent) = dest.parent() {
-            if let Err(e) = tokio::fs::create_dir_all(parent).await {
-                fail(&mut failed, format!("mkdir {}: {}", parent.display(), e));
-                processed += 1;
-                continue;
-            }
+        let dest_dir = dest.parent().unwrap_or(Path::new("/")).to_path_buf();
+        if let Err(e) = tokio::fs::create_dir_all(&dest_dir).await {
+            fail(&mut failed, format!("mkdir {}: {}", dest_dir.display(), e));
+            processed += 1;
+            continue;
         }
+
+        // The plan resolved collisions when it was built, but that was a
+        // snapshot: another writer (an Import running in a still-mounted tab)
+        // can land a file on the assigned path in between. `File::create`
+        // truncates and `rename` replaces, so re-resolve against the
+        // filesystem here, immediately before writing, on both paths.
+        //
+        // `taken` is a fresh empty set: the per-plan reservations are not
+        // available here and would be wrong if they were. Files are processed
+        // one at a time and each lands on disk before the next is resolved, so
+        // the filesystem is already the complete record of what this run has
+        // claimed — an intra-plan name clash shows up as an existing file.
+        // Resolving from `file.file_name` rather than the planned (possibly
+        // already suffixed) basename keeps the numbering from compounding into
+        // `a_1_1.cr3` when the plan-time collision has since gone away.
+        let dest = {
+            let dest_dir = dest_dir.clone();
+            let file_name = file.file_name.clone();
+            match tokio::task::spawn_blocking(move || {
+                let mut taken = HashSet::new();
+                assign_dest(&dest_dir, &file_name, &mut taken, &|p| p.exists())
+            })
+            .await
+            {
+                Ok(path) => path,
+                Err(e) => {
+                    fail(&mut failed, format!("resolve destination: {}", e));
+                    processed += 1;
+                    continue;
+                }
+            }
+        };
 
         // Same-volume moves rename instead of copying: no bytes cross a
         // device boundary, so there is nothing to hash-verify.
@@ -411,20 +470,11 @@ pub async fn run_move(
             // A rename failure (EXDEV, permissions) falls through to the copy path.
         }
 
-        let (full_hash, partial_hash) = if renamed {
-            // Hash the file at its new home so the index carries both hashes.
-            let full = match hasher::hash_file_full(&dest).await {
-                Ok(h) => h,
-                Err(e) => {
-                    let mut msg = format!("hash after rename: {}", e);
-                    if let Some(suffix) = rollback_after_failed_rename(&dest, &source).await {
-                        msg.push_str(&suffix);
-                    }
-                    fail(&mut failed, msg);
-                    processed += 1;
-                    continue;
-                }
-            };
+        // `full_hash` is `None` on the rename path: nothing was verified there,
+        // so no full hash is owed and reading the whole file to invent one
+        // would turn an instant rename into a read of the entire library.
+        let (full_hash, partial_hash): (Option<String>, String) = if renamed {
+            // Only the 4 MB the index's identity hash needs.
             let partial = match hasher::hash_file_partial(&dest, PARTIAL_WINDOW).await {
                 Ok(h) => h,
                 Err(e) => {
@@ -437,7 +487,7 @@ pub async fn run_move(
                     continue;
                 }
             };
-            (full, partial)
+            (None, partial)
         } else {
             let mut streamed: i64 = 0;
             let mut last = std::time::Instant::now();
@@ -464,11 +514,15 @@ pub async fn run_move(
             let outcome = match outcome {
                 Ok(Some(o)) => o,
                 Ok(None) => {
-                    let _ = channel.send(MoveEvent::Cancelled);
-                    return Ok(MoveResult { moved, bytes_moved, failed });
+                    cancelled = true;
+                    break;
                 }
+                // No `remove_file` here: `copy_hashing` owns the destination
+                // it created and has already cleaned up. Removing it from this
+                // side would delete whatever happens to sit at `dest` when the
+                // copy failed before creating anything (source-open timeout,
+                // ENOENT, EACCES).
                 Err(e) => {
-                    let _ = tokio::fs::remove_file(&dest).await;
                     fail(&mut failed, format!("copy: {}", e));
                     processed += 1;
                     continue;
@@ -504,7 +558,7 @@ pub async fn run_move(
                 continue;
             }
 
-            (outcome.full_hash, outcome.partial_hash)
+            (Some(outcome.full_hash), outcome.partial_hash)
         };
 
         // Source deletion only happens past this point — the destination is
@@ -592,13 +646,18 @@ pub async fn run_move(
         // only now is it safe to drop the source row.
         let _ = db::delete_location_by_device_and_path(&pool, &plan.source_device_id, &source_rel)
             .await;
-        let _ = db::set_full_hash_by_device_and_path(
-            &pool,
-            &plan.dest_device_id,
-            &dest_rel,
-            &full_hash,
-        )
-        .await;
+        // Only the copy path has a full hash to record — it is the one the
+        // destination was verified against. Renamed rows keep `full_hash` unset,
+        // like any file the app has not full-hash-verified.
+        if let Some(full_hash) = &full_hash {
+            let _ = db::set_full_hash_by_device_and_path(
+                &pool,
+                &plan.dest_device_id,
+                &dest_rel,
+                full_hash,
+            )
+            .await;
+        }
 
         moved += 1;
         bytes_moved += file.file_size;
@@ -614,8 +673,12 @@ pub async fn run_move(
         });
     }
 
+    // Every exit from the loop lands here, cancelled or not: the directories a
+    // partial run emptied are just as empty, and its orphaned index rows are
+    // just as orphaned.
+    //
     // Directories the move emptied are swept away; anything still holding a
-    // file (hidden files, failures) is left alone.
+    // file (hidden files, failures, files the cancel left behind) is left alone.
     let roots: Vec<PathBuf> = plan.source_roots.iter().map(PathBuf::from).collect();
     let _ = tokio::task::spawn_blocking(move || {
         for root in roots {
@@ -627,7 +690,13 @@ pub async fn run_move(
     let _ = db::cleanup_orphaned_files(&pool).await;
 
     let result = MoveResult { moved, bytes_moved, failed };
-    let _ = channel.send(MoveEvent::Complete(result.clone()));
+    let _ = channel.send(if cancelled {
+        // Cancelled carries the partial tally: a cancelled run reports what it
+        // completed.
+        MoveEvent::Cancelled(result.clone())
+    } else {
+        MoveEvent::Complete(result.clone())
+    });
     Ok(result)
 }
 
@@ -871,6 +940,42 @@ mod tests {
 
         assert!(outcome.is_none());
         assert!(!dst.exists(), "partial destination must not survive a cancel");
+    }
+
+    #[tokio::test]
+    async fn copy_hashing_leaves_an_existing_destination_alone_when_the_source_is_unreadable() {
+        // A copy that fails before `File::create` — here a source that does not
+        // exist, standing in for the 30 s open timeout on a stalled mount —
+        // must not touch whatever is sitting at the destination. Deleting it
+        // would destroy a file this move never created.
+        let tmp = tempfile::tempdir().unwrap();
+        let src = tmp.path().join("missing.bin");
+        let dst = tmp.path().join("dst.bin");
+        std::fs::write(&dst, b"somebody else's file").unwrap();
+
+        let token = CancellationToken::new();
+        let err = copy_hashing(&src, &dst, &token, &mut |_| {}).await;
+
+        assert!(err.is_err(), "opening a missing source must fail");
+        assert!(dst.exists(), "a destination this copy never created must survive");
+        assert_eq!(std::fs::read(&dst).unwrap(), b"somebody else's file");
+    }
+
+    #[tokio::test]
+    async fn copy_hashing_removes_the_destination_it_created_when_the_copy_fails() {
+        // The other side of the ownership rule: once the destination was
+        // created by this call, a failure must not leave the partial behind.
+        // A directory as the source opens fine and fails on the first read.
+        let tmp = tempfile::tempdir().unwrap();
+        let src = tmp.path().join("a-directory");
+        std::fs::create_dir(&src).unwrap();
+        let dst = tmp.path().join("dst.bin");
+
+        let token = CancellationToken::new();
+        let result = copy_hashing(&src, &dst, &token, &mut |_| {}).await;
+
+        assert!(result.is_err(), "reading a directory must fail");
+        assert!(!dst.exists(), "the partial destination must not survive");
     }
 
     #[tokio::test]
@@ -1241,5 +1346,308 @@ mod tests {
             "the source row must survive when the destination index write fails"
         );
         assert_eq!(locs[0].file_path, "a.cr3");
+    }
+
+    #[tokio::test]
+    async fn run_move_does_not_clobber_a_file_that_appeared_after_planning() {
+        // The plan assigned dst/2026-03-14/a.cr3 when it was free; an Import
+        // running in another tab lands its own a.cr3 there before the user
+        // confirms. `File::create` would truncate it, so the destination is
+        // re-resolved against the filesystem right before the copy.
+        let tmp = tempfile::tempdir().unwrap();
+        let src_mount = tmp.path().join("src");
+        let dst_mount = tmp.path().join("dst");
+        std::fs::create_dir_all(&src_mount).unwrap();
+        std::fs::create_dir_all(dst_mount.join("2026-03-14")).unwrap();
+        let src_file = src_mount.join("a.cr3");
+        std::fs::write(&src_file, b"the payload").unwrap();
+        let squatter = dst_mount.join("2026-03-14/a.cr3");
+        std::fs::write(&squatter, b"somebody else's import").unwrap();
+
+        let pool = test_pool().await;
+        db::upsert_device(&pool, &disk("vol-src", src_mount.to_str().unwrap()))
+            .await
+            .unwrap();
+        db::upsert_device(&pool, &disk("vol-dst", dst_mount.to_str().unwrap()))
+            .await
+            .unwrap();
+        let plan = plan_for(
+            vec![MoveFile {
+                source_path: src_file.to_string_lossy().to_string(),
+                dest_path: squatter.to_string_lossy().to_string(),
+                file_name: "a.cr3".into(),
+                file_size: 11,
+                modified_at: Some("2026-03-14 09:00:00".into()),
+                same_volume: false,
+            }],
+            src_mount.to_str().unwrap(),
+            dst_mount.to_str().unwrap(),
+        );
+
+        let result = run_move(
+            pool.clone(),
+            plan,
+            true,
+            test_channel(),
+            CancellationToken::new(),
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(result.moved, 1);
+        assert_eq!(
+            std::fs::read(&squatter).unwrap(),
+            b"somebody else's import",
+            "the file that appeared at the destination must not be overwritten"
+        );
+        assert_eq!(
+            std::fs::read(dst_mount.join("2026-03-14/a_1.cr3")).unwrap(),
+            b"the payload",
+            "the moved file must land beside it under a suffixed name"
+        );
+        assert!(!src_file.exists());
+
+        // The index must describe the suffixed path, not the squatter's.
+        let locs = crate::db::get_files_on_device(&pool, "vol-dst").await.unwrap();
+        assert_eq!(locs.len(), 1);
+        assert_eq!(locs[0].file_path, "2026-03-14/a_1.cr3");
+    }
+
+    #[tokio::test]
+    async fn run_move_does_not_clobber_an_appeared_file_on_the_rename_path() {
+        // Same race, same-volume: `rename` replaces just as silently as
+        // `File::create` truncates.
+        let tmp = tempfile::tempdir().unwrap();
+        let mount = tmp.path().join("vol");
+        std::fs::create_dir_all(mount.join("in")).unwrap();
+        std::fs::create_dir_all(mount.join("out/2026-03-14")).unwrap();
+        let src_file = mount.join("in/a.cr3");
+        std::fs::write(&src_file, b"payload").unwrap();
+        let squatter = mount.join("out/2026-03-14/a.cr3");
+        std::fs::write(&squatter, b"somebody else's import").unwrap();
+
+        let pool = test_pool().await;
+        db::upsert_device(&pool, &disk("vol-src", mount.to_str().unwrap()))
+            .await
+            .unwrap();
+        let mut plan = plan_for(
+            vec![MoveFile {
+                source_path: src_file.to_string_lossy().to_string(),
+                dest_path: squatter.to_string_lossy().to_string(),
+                file_name: "a.cr3".into(),
+                file_size: 7,
+                modified_at: Some("2026-03-14 09:00:00".into()),
+                same_volume: true,
+            }],
+            mount.to_str().unwrap(),
+            mount.to_str().unwrap(),
+        );
+        Arc::get_mut(&mut plan).unwrap().dest_device_id = "vol-src".into();
+
+        let result = run_move(
+            pool.clone(),
+            plan,
+            true,
+            test_channel(),
+            CancellationToken::new(),
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(result.moved, 1);
+        assert_eq!(
+            std::fs::read(&squatter).unwrap(),
+            b"somebody else's import",
+            "a rename must not replace a file that appeared at the destination"
+        );
+        assert_eq!(
+            std::fs::read(mount.join("out/2026-03-14/a_1.cr3")).unwrap(),
+            b"payload"
+        );
+        assert!(!src_file.exists());
+    }
+
+    #[tokio::test]
+    async fn run_move_leaves_full_hash_unset_on_the_rename_path() {
+        // A rename verifies nothing, so no full hash is owed — and reading the
+        // whole file to invent one would make a same-volume move read-bound.
+        let tmp = tempfile::tempdir().unwrap();
+        let mount = tmp.path().join("vol");
+        std::fs::create_dir_all(mount.join("in")).unwrap();
+        let src_file = mount.join("in/a.cr3");
+        std::fs::write(&src_file, b"payload").unwrap();
+
+        let pool = test_pool().await;
+        db::upsert_device(&pool, &disk("vol-src", mount.to_str().unwrap()))
+            .await
+            .unwrap();
+        let mut plan = plan_for(
+            vec![MoveFile {
+                source_path: src_file.to_string_lossy().to_string(),
+                dest_path: mount.join("out/2026-03-14/a.cr3").to_string_lossy().to_string(),
+                file_name: "a.cr3".into(),
+                file_size: 7,
+                modified_at: Some("2026-03-14 09:00:00".into()),
+                same_volume: true,
+            }],
+            mount.to_str().unwrap(),
+            mount.to_str().unwrap(),
+        );
+        Arc::get_mut(&mut plan).unwrap().dest_device_id = "vol-src".into();
+
+        let result = run_move(
+            pool.clone(),
+            plan,
+            true,
+            test_channel(),
+            CancellationToken::new(),
+        )
+        .await
+        .unwrap();
+        assert_eq!(result.moved, 1);
+
+        let rows: Vec<(String, Option<String>, String)> = sqlx::query_as(
+            "SELECT file_path, full_hash, blake3_hash FROM file_locations WHERE device_id = ?",
+        )
+        .bind("vol-src")
+        .fetch_all(&pool)
+        .await
+        .unwrap();
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].0, "out/2026-03-14/a.cr3");
+        assert!(
+            rows[0].1.is_none(),
+            "the rename path must not claim a verified full hash"
+        );
+        // The identity hash is the 4 MB partial, which for a 7-byte file is the
+        // whole file — but it is recorded as the partial, never as full_hash.
+        let expected_partial =
+            crate::hasher::hash_file_partial_sync(&mount.join("out/2026-03-14/a.cr3"), PARTIAL_WINDOW)
+                .unwrap();
+        assert_eq!(rows[0].2, expected_partial);
+    }
+
+    #[tokio::test]
+    async fn run_move_reports_what_it_completed_when_cancelled_and_still_cleans_up() {
+        let tmp = tempfile::tempdir().unwrap();
+        let src_mount = tmp.path().join("src");
+        let dst_mount = tmp.path().join("dst");
+        // Two source roots so the sweep has something to prove: "first" is
+        // emptied by the move, "second" still holds the file the cancel skipped.
+        std::fs::create_dir_all(src_mount.join("first")).unwrap();
+        std::fs::create_dir_all(src_mount.join("second")).unwrap();
+        std::fs::create_dir_all(&dst_mount).unwrap();
+        let a = src_mount.join("first/a.cr3");
+        let b = src_mount.join("second/b.cr3");
+        std::fs::write(&a, b"first payload").unwrap();
+        std::fs::write(&b, b"second payload").unwrap();
+
+        let pool = test_pool().await;
+        db::upsert_device(&pool, &disk("vol-src", src_mount.to_str().unwrap()))
+            .await
+            .unwrap();
+        db::upsert_device(&pool, &disk("vol-dst", dst_mount.to_str().unwrap()))
+            .await
+            .unwrap();
+        // An orphaned files row — no location points at it — to prove
+        // cleanup_orphaned_files still runs on the cancelled path.
+        db::upsert_file(&pool, "orphan-hash", 1, "orphan.cr3", "cr3")
+            .await
+            .unwrap();
+
+        let mut plan = plan_for(
+            vec![
+                MoveFile {
+                    source_path: a.to_string_lossy().to_string(),
+                    dest_path: dst_mount.join("2026-03-14/a.cr3").to_string_lossy().to_string(),
+                    file_name: "a.cr3".into(),
+                    file_size: 13,
+                    modified_at: Some("2026-03-14 09:00:00".into()),
+                    same_volume: false,
+                },
+                MoveFile {
+                    source_path: b.to_string_lossy().to_string(),
+                    dest_path: dst_mount.join("2026-03-14/b.cr3").to_string_lossy().to_string(),
+                    file_name: "b.cr3".into(),
+                    file_size: 14,
+                    modified_at: Some("2026-03-14 09:00:00".into()),
+                    same_volume: false,
+                },
+            ],
+            src_mount.to_str().unwrap(),
+            dst_mount.to_str().unwrap(),
+        );
+        Arc::get_mut(&mut plan).unwrap().source_roots = vec![
+            src_mount.join("first").to_string_lossy().to_string(),
+            src_mount.join("second").to_string_lossy().to_string(),
+        ];
+
+        // Cancel the moment the run announces it has reached the second file,
+        // so the first is fully moved and the second never is.
+        let cancel = CancellationToken::new();
+        let events: Arc<std::sync::Mutex<Vec<String>>> = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let channel = {
+            let cancel = cancel.clone();
+            let events = events.clone();
+            Channel::new(move |body: tauri::ipc::InvokeResponseBody| {
+                let json = match body {
+                    tauri::ipc::InvokeResponseBody::Json(s) => s,
+                    tauri::ipc::InvokeResponseBody::Raw(b) => {
+                        String::from_utf8_lossy(&b).to_string()
+                    }
+                };
+                if json.contains("b.cr3") {
+                    cancel.cancel();
+                }
+                events.lock().unwrap().push(json);
+                Ok(())
+            })
+        };
+
+        let result = run_move(pool.clone(), plan, true, channel, cancel)
+            .await
+            .unwrap();
+
+        assert_eq!(result.moved, 1, "a cancelled run reports what it completed");
+        assert_eq!(result.bytes_moved, 13);
+        assert!(!a.exists(), "the completed file's source is gone");
+        assert!(b.exists(), "the cancelled file is untouched");
+        assert!(
+            !dst_mount.join("2026-03-14/b.cr3").exists(),
+            "no partial destination survives the cancel"
+        );
+
+        // The Cancelled event carries the partial tally to the frontend.
+        let sent = events.lock().unwrap().clone();
+        let cancelled_event = sent
+            .iter()
+            .find(|e| e.contains("Cancelled"))
+            .expect("a Cancelled event must be sent");
+        assert!(
+            cancelled_event.contains("\"moved\":1"),
+            "Cancelled must carry the partial result, got {}",
+            cancelled_event
+        );
+        assert!(
+            !sent.iter().any(|e| e.contains("Complete")),
+            "a cancelled run must not also report Complete"
+        );
+
+        // End-of-run cleanup ran despite the cancel.
+        assert!(
+            !src_mount.join("first").exists(),
+            "the emptied source root must still be swept"
+        );
+        assert!(src_mount.join("second").exists());
+        let orphans: Vec<(String,)> =
+            sqlx::query_as("SELECT blake3_hash FROM files WHERE blake3_hash = ?")
+                .bind("orphan-hash")
+                .fetch_all(&pool)
+                .await
+                .unwrap();
+        assert!(
+            orphans.is_empty(),
+            "cleanup_orphaned_files must still run on a cancelled run"
+        );
     }
 }
