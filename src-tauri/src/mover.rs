@@ -303,6 +303,24 @@ pub fn remove_empty_dirs(root: &Path) -> bool {
     false
 }
 
+/// A same-volume rename succeeded but a post-rename check (size, hash) then
+/// failed: the file is sitting at `dest`, unindexed, and reporting it as a
+/// plain failure would be a lie — it did move. Roll the rename back so disk
+/// state matches the failure report. Returns an error suffix to append to
+/// the `MoveError` message when the rollback itself fails, since that is the
+/// one case where the user must be told the file is at the destination but
+/// unindexed.
+async fn rollback_after_failed_rename(dest: &Path, source: &Path) -> Option<String> {
+    match tokio::fs::rename(dest, source).await {
+        Ok(()) => None,
+        Err(e) => Some(format!(
+            " (also failed to roll back the rename: file is at {} but not indexed: {})",
+            dest.display(),
+            e
+        )),
+    }
+}
+
 /// Execute a plan: move each file, verify it landed, delete the source, and
 /// rewrite the index. Per-file failures are collected, never fatal.
 pub async fn run_move(
@@ -363,15 +381,28 @@ pub async fn run_move(
                 match tokio::fs::metadata(&dest).await {
                     Ok(m) if m.len() as i64 == file.file_size => renamed = true,
                     Ok(m) => {
-                        fail(
-                            &mut failed,
-                            format!("size mismatch after rename: {} vs {}", m.len(), file.file_size),
+                        let mut msg = format!(
+                            "size mismatch after rename: {} vs {}",
+                            m.len(),
+                            file.file_size
                         );
+                        if let Some(suffix) =
+                            rollback_after_failed_rename(&dest, &source).await
+                        {
+                            msg.push_str(&suffix);
+                        }
+                        fail(&mut failed, msg);
                         processed += 1;
                         continue;
                     }
                     Err(e) => {
-                        fail(&mut failed, format!("stat after rename: {}", e));
+                        let mut msg = format!("stat after rename: {}", e);
+                        if let Some(suffix) =
+                            rollback_after_failed_rename(&dest, &source).await
+                        {
+                            msg.push_str(&suffix);
+                        }
+                        fail(&mut failed, msg);
                         processed += 1;
                         continue;
                     }
@@ -385,7 +416,11 @@ pub async fn run_move(
             let full = match hasher::hash_file_full(&dest).await {
                 Ok(h) => h,
                 Err(e) => {
-                    fail(&mut failed, format!("hash after rename: {}", e));
+                    let mut msg = format!("hash after rename: {}", e);
+                    if let Some(suffix) = rollback_after_failed_rename(&dest, &source).await {
+                        msg.push_str(&suffix);
+                    }
+                    fail(&mut failed, msg);
                     processed += 1;
                     continue;
                 }
@@ -393,7 +428,11 @@ pub async fn run_move(
             let partial = match hasher::hash_file_partial(&dest, PARTIAL_WINDOW).await {
                 Ok(h) => h,
                 Err(e) => {
-                    fail(&mut failed, format!("partial hash after rename: {}", e));
+                    let mut msg = format!("partial hash after rename: {}", e);
+                    if let Some(suffix) = rollback_after_failed_rename(&dest, &source).await {
+                        msg.push_str(&suffix);
+                    }
+                    fail(&mut failed, msg);
                     processed += 1;
                     continue;
                 }
@@ -505,11 +544,27 @@ pub async fn run_move(
             .to_string_lossy()
             .to_lowercase();
 
-        let _ = db::delete_location_by_device_and_path(&pool, &plan.source_device_id, &source_rel)
-            .await;
-        let _ = db::upsert_file(&pool, &partial_hash, file.file_size, &file.file_name, &extension)
-            .await;
-        let _ = db::upsert_location(
+        // Write the destination side of the index before touching the source
+        // row: the file already moved on disk at this point (deleted or
+        // renamed away above), so if either destination write fails, the
+        // source row must survive as the only remaining record — losing both
+        // would erase the file from the index entirely.
+        if let Err(e) =
+            db::upsert_file(&pool, &partial_hash, file.file_size, &file.file_name, &extension)
+                .await
+        {
+            fail(
+                &mut failed,
+                format!(
+                    "file moved to {} but could not be indexed: {}",
+                    dest.display(),
+                    e
+                ),
+            );
+            processed += 1;
+            continue;
+        }
+        if let Err(e) = db::upsert_location(
             &pool,
             &partial_hash,
             &plan.dest_device_id,
@@ -519,7 +574,24 @@ pub async fn run_move(
             file.modified_at.as_deref(),
             "move",
         )
-        .await;
+        .await
+        {
+            fail(
+                &mut failed,
+                format!(
+                    "file moved to {} but could not be indexed: {}",
+                    dest.display(),
+                    e
+                ),
+            );
+            processed += 1;
+            continue;
+        }
+
+        // Only past this point is the destination row confirmed durable, so
+        // only now is it safe to drop the source row.
+        let _ = db::delete_location_by_device_and_path(&pool, &plan.source_device_id, &source_rel)
+            .await;
         let _ = db::set_full_hash_by_device_and_path(
             &pool,
             &plan.dest_device_id,
@@ -1057,5 +1129,117 @@ mod tests {
         assert_eq!(result.moved, 1);
         assert!(!src_file.exists());
         assert!(mount.join("out/2026-03-14/a.cr3").exists());
+    }
+
+    #[tokio::test]
+    async fn run_move_rolls_back_a_same_volume_rename_when_the_size_check_fails() {
+        let tmp = tempfile::tempdir().unwrap();
+        let mount = tmp.path().join("vol");
+        std::fs::create_dir_all(mount.join("in")).unwrap();
+        let src_file = mount.join("in/a.cr3");
+        std::fs::write(&src_file, b"payload").unwrap();
+
+        let pool = test_pool().await;
+        db::upsert_device(&pool, &disk("vol-src", mount.to_str().unwrap()))
+            .await
+            .unwrap();
+        let mut plan = plan_for(
+            vec![MoveFile {
+                source_path: src_file.to_string_lossy().to_string(),
+                dest_path: mount.join("out/2026-03-14/a.cr3").to_string_lossy().to_string(),
+                file_name: "a.cr3".into(),
+                // "payload" is 7 bytes on disk; this deliberately disagrees so
+                // the size-mismatch arm fires after the rename already landed.
+                file_size: 999,
+                modified_at: Some("2026-03-14 09:00:00".into()),
+                same_volume: true,
+            }],
+            mount.to_str().unwrap(),
+            mount.to_str().unwrap(),
+        );
+        Arc::get_mut(&mut plan).unwrap().dest_device_id = "vol-src".into();
+
+        let channel = test_channel();
+        let result = run_move(pool, plan, true, channel, CancellationToken::new())
+            .await
+            .unwrap();
+
+        assert_eq!(result.moved, 0);
+        assert_eq!(result.failed.len(), 1);
+        assert!(
+            src_file.exists(),
+            "a failed post-rename check must roll the rename back"
+        );
+        assert!(
+            !mount.join("out/2026-03-14/a.cr3").exists(),
+            "the destination must not remain after a rollback"
+        );
+    }
+
+    #[tokio::test]
+    async fn run_move_keeps_the_source_row_when_the_destination_index_write_fails() {
+        let tmp = tempfile::tempdir().unwrap();
+        let src_mount = tmp.path().join("src");
+        let dst_mount = tmp.path().join("dst");
+        std::fs::create_dir_all(&src_mount).unwrap();
+        std::fs::create_dir_all(&dst_mount).unwrap();
+        let src_file = src_mount.join("a.cr3");
+        std::fs::write(&src_file, b"the payload").unwrap();
+
+        let pool = test_pool().await;
+        // Seed only the source device — "vol-dst" gets no storage_devices row,
+        // so upsert_location's FOREIGN KEY on dest_device_id fails.
+        db::upsert_device(&pool, &disk("vol-src", src_mount.to_str().unwrap()))
+            .await
+            .unwrap();
+        // A pre-existing location row, standing in for what an earlier scan
+        // would have recorded for the source file.
+        db::upsert_file(&pool, "preexisting-hash", 11, "a.cr3", "cr3")
+            .await
+            .unwrap();
+        db::upsert_location(
+            &pool,
+            "preexisting-hash",
+            "vol-src",
+            "a.cr3",
+            "a.cr3",
+            11,
+            Some("2026-03-14 09:00:00"),
+            "full",
+        )
+        .await
+        .unwrap();
+
+        let plan = plan_for(
+            vec![MoveFile {
+                source_path: src_file.to_string_lossy().to_string(),
+                dest_path: dst_mount
+                    .join("2026-03-14/a.cr3")
+                    .to_string_lossy()
+                    .to_string(),
+                file_name: "a.cr3".into(),
+                file_size: 11,
+                modified_at: Some("2026-03-14 09:00:00".into()),
+                same_volume: false,
+            }],
+            src_mount.to_str().unwrap(),
+            dst_mount.to_str().unwrap(),
+        );
+
+        let channel = test_channel();
+        let result = run_move(pool.clone(), plan, true, channel, CancellationToken::new())
+            .await
+            .unwrap();
+
+        assert_eq!(result.moved, 0);
+        assert_eq!(result.failed.len(), 1);
+
+        let locs = crate::db::get_files_on_device(&pool, "vol-src").await.unwrap();
+        assert_eq!(
+            locs.len(),
+            1,
+            "the source row must survive when the destination index write fails"
+        );
+        assert_eq!(locs[0].file_path, "a.cr3");
     }
 }
