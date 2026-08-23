@@ -1,7 +1,23 @@
 use std::collections::HashMap;
-use std::path::Path;
+use std::path::{Path, PathBuf};
+use std::sync::Arc;
+use std::time::Duration;
+
+use tauri::ipc::Channel;
+use tokio::sync::Semaphore;
+use tokio_util::sync::CancellationToken;
 
 use crate::models::*;
+use crate::models::FileLocation;
+
+/// How many probes may be in flight at once. Enough to hide per-call latency
+/// on a spinning disk, small enough that a stalled mount cannot swallow the
+/// blocking pool.
+const PROBE_CONCURRENCY: usize = 8;
+
+/// Per-probe deadline. A `stat` that has not answered in this long is treated
+/// as unreadable, never as a deletion.
+const PROBE_TIMEOUT_SECS: u64 = 5;
 
 /// What the filesystem says about one indexed path.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -135,6 +151,83 @@ pub fn classify(
 
     out.purge_location_ids.sort_unstable();
     out
+}
+
+/// `stat` one path with a deadline.
+///
+/// Uses `symlink_metadata` so a dangling symlink reports as present — the
+/// entry does exist, and deleting a backup because a link target moved would
+/// be wrong.
+pub async fn probe_path(path: PathBuf, secs: u64) -> Presence {
+    let probe = tokio::task::spawn_blocking(move || std::fs::symlink_metadata(&path));
+    match tokio::time::timeout(Duration::from_secs(secs), probe).await {
+        Ok(Ok(Ok(_))) => Presence::Present,
+        Ok(Ok(Err(e))) if e.kind() == std::io::ErrorKind::NotFound => Presence::Gone,
+        _ => Presence::Unknown,
+    }
+}
+
+/// Probes every location whose device has a known mount point.
+///
+/// Locations on devices absent from `mounts` are dropped: the caller has
+/// already decided those devices are out of the diff, and a missing mount is
+/// not evidence of a deletion.
+pub async fn probe_locations(
+    locations: Vec<FileLocation>,
+    mounts: &HashMap<String, String>,
+    cancel: &CancellationToken,
+    channel: &Channel<DiffEvent>,
+) -> Vec<ProbedLocation> {
+    let in_scope: Vec<FileLocation> = locations
+        .into_iter()
+        .filter(|l| mounts.contains_key(&l.device_id))
+        .collect();
+
+    let total = in_scope.len() as u64;
+    let _ = channel.send(DiffEvent::Started { total });
+
+    let semaphore = Arc::new(Semaphore::new(PROBE_CONCURRENCY));
+    let mut handles = Vec::with_capacity(in_scope.len());
+
+    for loc in in_scope {
+        if cancel.is_cancelled() {
+            break;
+        }
+        let mount = mounts[&loc.device_id].clone();
+        let semaphore = semaphore.clone();
+        handles.push(tokio::spawn(async move {
+            let _permit = semaphore.acquire_owned().await.ok()?;
+            let full = Path::new(&mount).join(&loc.file_path);
+            let presence = probe_path(full, PROBE_TIMEOUT_SECS).await;
+            Some(ProbedLocation {
+                location_id: loc.id,
+                device_id: loc.device_id,
+                file_path: loc.file_path,
+                file_name: loc.file_name,
+                file_size: loc.file_size,
+                blake3_hash: loc.blake3_hash,
+                presence,
+            })
+        }));
+    }
+
+    let mut probed = Vec::with_capacity(handles.len());
+    let mut checked: u64 = 0;
+    for handle in handles {
+        if let Ok(Some(p)) = handle.await {
+            checked += 1;
+            if checked % 25 == 0 || checked == total {
+                let _ = channel.send(DiffEvent::Progress {
+                    checked,
+                    total,
+                    current_device: p.device_id.clone(),
+                });
+            }
+            probed.push(p);
+        }
+    }
+
+    probed
 }
 
 #[cfg(test)]
@@ -281,5 +374,30 @@ mod tests {
         assert!(out.delete.is_empty());
         assert!(out.copy.is_empty());
         assert!(out.unreadable.is_empty());
+    }
+
+    #[tokio::test]
+    async fn probe_reports_an_existing_file_as_present() {
+        let tmp = tempfile::tempdir().unwrap();
+        let file = tmp.path().join("a.cr3");
+        std::fs::write(&file, b"hello").unwrap();
+
+        assert_eq!(probe_path(file, 5).await, Presence::Present);
+    }
+
+    #[tokio::test]
+    async fn probe_reports_a_missing_file_as_gone() {
+        let tmp = tempfile::tempdir().unwrap();
+        let file = tmp.path().join("nope.cr3");
+
+        assert_eq!(probe_path(file, 5).await, Presence::Gone);
+    }
+
+    #[tokio::test]
+    async fn probe_reports_a_path_under_a_missing_parent_as_gone() {
+        let tmp = tempfile::tempdir().unwrap();
+        let file = tmp.path().join("no-such-dir/a.cr3");
+
+        assert_eq!(probe_path(file, 5).await, Presence::Gone);
     }
 }
