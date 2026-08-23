@@ -263,17 +263,20 @@ Layout:
 - Delete entries are checked by default, per the requirement that the
   backups sync to the SoT unless the user intervenes. Copy entries are checked
   by default too; the two sections resolve independently.
-- Rows are virtualized with `@tanstack/react-virtual`, as in `FileTable`.
+- A folder holding more than 500 files starts collapsed, and folders below
+  the second level start collapsed too. Together with lazy previews this is
+  what keeps a large shoot renderable; a recursive tree does not virtualize
+  cleanly, so `@tanstack/react-virtual` is not used here.
 
 ### Thumbnails
 
 Each row shows a small preview via the existing `<FilePreview>`, which already
 handles RAW, HEIC and video through `getThumbnail`.
 
-`FilePreview` mounts only when its row scrolls into view. Mounting all of them
-would kick off a thumbnail generation per file, which for a few thousand
-files means an unusable page. Virtualization covers the list rows; the
-confirmation grid uses an `IntersectionObserver` wrapper for the same reason.
+`FilePreview` mounts only when its row scrolls into view, via an
+`IntersectionObserver` wrapper used by both the list and the confirmation
+grid. Mounting all of them would kick off a thumbnail generation per file,
+which for a few thousand files means an unusable page.
 
 Previews always resolve from a copy that still exists: backup locations for
 delete entries (the SoT copy is gone by definition), the SoT location for copy
