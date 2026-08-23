@@ -1,5 +1,7 @@
 use std::collections::HashMap;
+use std::future::Future;
 use std::path::{Path, PathBuf};
+use std::pin::Pin;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -225,6 +227,38 @@ pub async fn probe_path(path: PathBuf, secs: u64) -> Presence {
     }
 }
 
+/// A periodic mid-pass check that the source of truth is still the disk we
+/// started against.
+///
+/// The probe pass can run for minutes. A volume that unmounts and comes back
+/// inside one pass would satisfy a before-and-after check while every file
+/// probed in the gap read `Gone` — a whole-project deletion proposal. The
+/// engine stays free of database and device concerns, so the caller supplies
+/// the check.
+pub trait SotRecheck: Sync {
+    /// `false` aborts the pass.
+    fn still_mounted(&self) -> Pin<Box<dyn Future<Output = bool> + Send + '_>>;
+}
+
+/// How many probes may complete between two mid-pass source-of-truth checks.
+///
+/// The check costs one marker read plus a sample of `stat`s, all under the
+/// same deadline as the mount gate, so it is cheap next to 250 probes on a
+/// healthy disk. It is also fast exactly when it matters: an unmounted volume
+/// answers `NotFound` immediately, so 250 probes elapse in milliseconds and
+/// the drop is caught almost at once. The slow case — a stalled mount — makes
+/// the window long, but there every probe reads `Unknown` rather than `Gone`,
+/// so nothing is ever proposed for deletion.
+const SOT_RECHECK_EVERY: u64 = 250;
+
+/// The outcome of a probe pass.
+pub struct ProbePass {
+    pub probed: Vec<ProbedLocation>,
+    /// Set when a mid-pass source-of-truth re-check failed. The results are
+    /// unusable: everything probed after the drop reads as gone.
+    pub sot_lost: bool,
+}
+
 /// Probes every location whose device has a known mount point.
 ///
 /// Locations on devices absent from `mounts` are dropped: the caller has
@@ -235,7 +269,8 @@ pub async fn probe_locations(
     mounts: &HashMap<String, String>,
     cancel: &CancellationToken,
     channel: &Channel<DiffEvent>,
-) -> Vec<ProbedLocation> {
+    recheck: Option<&dyn SotRecheck>,
+) -> ProbePass {
     let in_scope: Vec<FileLocation> = locations
         .into_iter()
         .filter(|l| mounts.contains_key(&l.device_id))
@@ -271,7 +306,18 @@ pub async fn probe_locations(
 
     let mut probed = Vec::with_capacity(handles.len());
     let mut checked: u64 = 0;
-    for handle in handles {
+    let mut sot_lost = false;
+    let mut stop_at: Option<usize> = None;
+
+    for (i, handle) in handles.iter_mut().enumerate() {
+        // Cancelling has to stop the drain too. The spawned probes are
+        // cancellation-unaware, so awaiting the rest of them would leave the
+        // user waiting out the whole remaining pass — against a stalled mount
+        // that is `remaining / concurrency * timeout`, i.e. tens of minutes.
+        if cancel.is_cancelled() {
+            stop_at = Some(i);
+            break;
+        }
         if let Ok(Some(p)) = handle.await {
             checked += 1;
             if checked % 25 == 0 || checked == total {
@@ -283,9 +329,24 @@ pub async fn probe_locations(
             }
             probed.push(p);
         }
+        if checked > 0 && checked % SOT_RECHECK_EVERY == 0 {
+            if let Some(r) = recheck {
+                if !r.still_mounted().await {
+                    sot_lost = true;
+                    stop_at = Some(i + 1);
+                    break;
+                }
+            }
+        }
     }
 
-    probed
+    if let Some(from) = stop_at {
+        for handle in &handles[from..] {
+            handle.abort();
+        }
+    }
+
+    ProbePass { probed, sot_lost }
 }
 
 use crate::db::{self, DbPool};
@@ -907,5 +968,84 @@ mod tests {
         let file = tmp.path().join("no-such-dir/a.cr3");
 
         assert_eq!(probe_path(file, 5).await, Presence::Gone);
+    }
+    fn location(id: i64, device: &str, path: &str) -> FileLocation {
+        FileLocation {
+            id,
+            blake3_hash: format!("h{id}"),
+            device_id: device.to_string(),
+            file_path: path.to_string(),
+            file_name: path.rsplit('/').next().unwrap().to_string(),
+            file_size: 100,
+            modified_at: Some("2026-08-14 10:00:00".to_string()),
+            last_verified: "2026-08-14 10:00:00".to_string(),
+            scan_mode: "full".to_string(),
+        }
+    }
+
+    fn null_channel() -> Channel<DiffEvent> {
+        Channel::new(|_| Ok(()))
+    }
+
+    struct AlwaysLost;
+    impl SotRecheck for AlwaysLost {
+        fn still_mounted(&self) -> Pin<Box<dyn Future<Output = bool> + Send + '_>> {
+            Box::pin(async { false })
+        }
+    }
+
+    #[tokio::test]
+    async fn probe_locations_stops_when_the_mid_pass_recheck_fails() {
+        // A volume that unmounts and comes back inside one pass satisfies a
+        // before-and-after check while everything probed in the gap reads as
+        // gone.
+        let tmp = tempfile::tempdir().unwrap();
+        let mut mounts = HashMap::new();
+        mounts.insert("dev-1".to_string(), tmp.path().to_string_lossy().into_owned());
+        let locations: Vec<FileLocation> = (1..=(SOT_RECHECK_EVERY as i64 + 50))
+            .map(|i| location(i, "dev-1", &format!("f{i}.cr3")))
+            .collect();
+
+        let pass = probe_locations(
+            locations,
+            &mounts,
+            &CancellationToken::new(),
+            &null_channel(),
+            Some(&AlwaysLost),
+        )
+        .await;
+
+        assert!(pass.sot_lost);
+        assert_eq!(pass.probed.len() as u64, SOT_RECHECK_EVERY);
+    }
+
+    #[tokio::test]
+    async fn probe_locations_completes_when_the_recheck_holds() {
+        struct StillThere;
+        impl SotRecheck for StillThere {
+            fn still_mounted(&self) -> Pin<Box<dyn Future<Output = bool> + Send + '_>> {
+                Box::pin(async { true })
+            }
+        }
+
+        let tmp = tempfile::tempdir().unwrap();
+        let mut mounts = HashMap::new();
+        mounts.insert("dev-1".to_string(), tmp.path().to_string_lossy().into_owned());
+        let total = SOT_RECHECK_EVERY as i64 + 5;
+        let locations: Vec<FileLocation> = (1..=total)
+            .map(|i| location(i, "dev-1", &format!("f{i}.cr3")))
+            .collect();
+
+        let pass = probe_locations(
+            locations,
+            &mounts,
+            &CancellationToken::new(),
+            &null_channel(),
+            Some(&StillThere),
+        )
+        .await;
+
+        assert!(!pass.sot_lost);
+        assert_eq!(pass.probed.len() as i64, total);
     }
 }
