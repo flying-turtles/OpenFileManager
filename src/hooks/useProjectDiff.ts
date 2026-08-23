@@ -107,28 +107,35 @@ export function useProjectDiff(projectId: number, sotDeviceId: string) {
   const [resolveResult, setResolveResult] = useState<ResolveResult | null>(null);
   const [reloadKey, setReloadKey] = useState(0);
 
-  // Shared with handleEvent so a superseded/unmounted run's Progress and
-  // Error events stop reaching state, not just its terminal .then/.catch.
-  const cancelledRef = useRef(false);
-
-  const handleEvent = useCallback((event: DiffEvent) => {
-    if (cancelledRef.current) return;
-    if (typeof event === "string") return;
-    if ("Progress" in event) setProgress(event.Progress);
-    else if ("Error" in event) setError(event.Error.message);
-  }, []);
+  // Identifies the current effect run. A boolean can't distinguish "run A"
+  // from "run B" — React fires cleanup(A) and then body(B) back-to-back in
+  // the same tick, so a shared flag set true by A's cleanup is immediately
+  // set false again by B's body, and a late event from A reads through.
+  // A monotonically increasing id per run fixes that: each run captures its
+  // own id and only fires state setters while that id is still current.
+  const runIdRef = useRef(0);
 
   useEffect(() => {
-    cancelledRef.current = false;
+    const runId = ++runIdRef.current;
     setPhase("computing");
     setError("");
     setDiff(null);
     setProgress(null);
     setResolveResult(null);
 
+    // Defined inline so it closes over this run's `runId` — the simplest
+    // way to give it a per-run identity check without adding a state
+    // dependency (a dependency would re-wire the channel on every tick).
+    const handleEvent = (event: DiffEvent) => {
+      if (runId !== runIdRef.current) return;
+      if (typeof event === "string") return;
+      if ("Progress" in event) setProgress(event.Progress);
+      else if ("Error" in event) setError(event.Error.message);
+    };
+
     computeProjectDiff(projectId, sotDeviceId, handleEvent)
       .then((d) => {
-        if (cancelledRef.current) return;
+        if (runId !== runIdRef.current) return;
         setDiff(d);
         // Both directions start fully selected: the point of the feature is
         // to bring the backups in line unless the user says otherwise.
@@ -143,20 +150,25 @@ export function useProjectDiff(projectId: number, sotDeviceId: string) {
         setPhase("ready");
       })
       .catch((e) => {
-        if (cancelledRef.current) return;
+        if (runId !== runIdRef.current) return;
         setError(String(e));
         setPhase("error");
       });
 
+    // Deliberately no cancelProjectDiff() call here. cleanup(A) and the next
+    // body(B) race the backend with no ordering guarantee, and the backend
+    // keeps a single cancel-token slot that each new compute overwrites —
+    // a cleanup-time cancel can end up cancelling B's fresh run instead of
+    // A's abandoned one. So the abandoned run is left to keep probing until
+    // it finishes on its own; that's fine, it's read-only and every probe
+    // is deadline-guarded. Bumping runIdRef below is what actually matters:
+    // it stops the abandoned run's events from reaching state. The Cancel
+    // button (`cancel()`) still calls cancelProjectDiff() directly and
+    // still works, since nothing else is starting a run at that moment.
     return () => {
-      cancelledRef.current = true;
-      // The backend run keeps probing and emitting events until told to
-      // stop — losing our reference to it (e.g. on reload() or unmount)
-      // isn't enough. Cancelling an already-finished run is a no-op, so
-      // its rejection is swallowed.
-      cancelProjectDiff().catch(() => {});
+      runIdRef.current += 1;
     };
-  }, [projectId, sotDeviceId, reloadKey, handleEvent]);
+  }, [projectId, sotDeviceId, reloadKey]);
 
   const toggleKeys = useCallback(
     (section: "delete" | "copy", keys: string[], next: boolean) => {
