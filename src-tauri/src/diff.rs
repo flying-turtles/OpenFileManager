@@ -55,6 +55,21 @@ pub struct ClassifyOutput {
 /// Grouping is by `(blake3_hash, file_size)`: `blake3_hash` only covers the
 /// first 4 MB, so two files sharing a header are the same hash but not the
 /// same file.
+///
+/// Within a group the two directions use deliberately different rules:
+///
+/// * **Deleting** is evidence-driven and per *path*. A backup row is only a
+///   delete candidate when the source of truth has an indexed row at the very
+///   same relative path and that path probed `Gone`, *and* no source-of-truth
+///   row in the group is still `Present`. The same content living at two
+///   paths on the source of truth (a Lightroom cull that rejects `A/x.cr3`
+///   and keeps `B/x.cr3`) must never take the backup's surviving copy with
+///   it. A backup copy at a relative path the source of truth never indexed
+///   is left alone: there is no evidence about that path either way.
+/// * **Copying** is per *content*. A backup that already holds this content
+///   anywhere is in sync; proposing a second copy just because the source of
+///   truth keeps two would multiply files on the backups without protecting
+///   anything new.
 pub fn classify(
     probed: &[ProbedLocation],
     sot_device_id: &str,
@@ -77,26 +92,94 @@ pub fn classify(
     keys.sort();
 
     for key in keys {
-        let group = &groups[key];
-        let sot = match group.iter().find(|l| l.device_id == sot_device_id) {
-            Some(l) => *l,
-            // Never on the source of truth: not our business.
-            None => continue,
-        };
+        let mut group: Vec<&ProbedLocation> = groups[key].clone();
+        // Row order out of SQLite is rowid order, which would make every
+        // choice below depend on insertion history. Sort so it does not.
+        group.sort_by(|a, b| (&a.device_id, &a.file_path).cmp(&(&b.device_id, &b.file_path)));
 
-        match sot.presence {
-            Presence::Unknown => {
-                out.unreadable.push(DiffUnreadable {
-                    device_id: sot.device_id.clone(),
-                    relative_path: sot.file_path.clone(),
-                    error: "Could not read on the source of truth".to_string(),
-                });
+        let (sot_rows, backup_rows): (Vec<&ProbedLocation>, Vec<&ProbedLocation>) = group
+            .iter()
+            .partition(|l| l.device_id == sot_device_id);
+
+        // Never on the source of truth: not our business.
+        if sot_rows.is_empty() {
+            continue;
+        }
+
+        // Purging is per row and independent of everything else in the group:
+        // a row pointing at a path confirmed gone from disk is wrong whatever
+        // the rest of the group looks like.
+        for l in sot_rows.iter().filter(|l| l.presence == Presence::Gone) {
+            out.purge_location_ids.push(l.location_id);
+        }
+
+        for l in sot_rows.iter().filter(|l| l.presence == Presence::Unknown) {
+            out.unreadable.push(DiffUnreadable {
+                device_id: l.device_id.clone(),
+                relative_path: l.file_path.clone(),
+                error: "Could not read on the source of truth".to_string(),
+            });
+        }
+
+        let sot_present: Vec<&&ProbedLocation> = sot_rows
+            .iter()
+            .filter(|l| l.presence == Presence::Present)
+            .collect();
+        let any_sot_unknown = sot_rows.iter().any(|l| l.presence == Presence::Unknown);
+        let gone_paths: std::collections::HashSet<&str> = sot_rows
+            .iter()
+            .filter(|l| l.presence == Presence::Gone)
+            .map(|l| l.file_path.as_str())
+            .collect();
+
+        if !sot_present.is_empty() {
+            // The content still exists on the source of truth, so nothing in
+            // this group may be deleted — not even a backup row whose own
+            // path vanished, because that path's content is still protected
+            // here. Only the copy direction applies.
+            let sot = sot_present[0];
+            for device_id in backup_device_ids {
+                let rows: Vec<&&ProbedLocation> = backup_rows
+                    .iter()
+                    .filter(|l| l.device_id == *device_id)
+                    .collect();
+                if rows.iter().any(|l| l.presence == Presence::Present) {
+                    continue;
+                }
+                if let Some(unknown) = rows.iter().find(|l| l.presence == Presence::Unknown) {
+                    out.unreadable.push(DiffUnreadable {
+                        device_id: device_id.clone(),
+                        relative_path: unknown.file_path.clone(),
+                        error: "Could not read on this device".to_string(),
+                    });
+                    continue;
+                }
+                // No row at all, or only rows whose files are gone.
+                out.copy.push((
+                    device_id.clone(),
+                    DiffFileEntry {
+                        blake3_hash: sot.blake3_hash.clone(),
+                        file_size: sot.file_size,
+                        file_name: sot.file_name.clone(),
+                        relative_path: sot.file_path.clone(),
+                        location_id: None,
+                        source_path: Some(
+                            Path::new(sot_mount)
+                                .join(&sot.file_path)
+                                .to_string_lossy()
+                                .to_string(),
+                        ),
+                    },
+                ));
             }
-            Presence::Gone => {
-                out.purge_location_ids.push(sot.location_id);
-                for loc in group.iter().filter(|l| l.device_id != sot_device_id) {
-                    match loc.presence {
-                        Presence::Present => out.delete.push((
+        } else if !any_sot_unknown && !gone_paths.is_empty() {
+            // Every indexed copy on the source of truth is confirmed gone, so
+            // the content itself was rejected. Delete backup copies that sit
+            // at one of those confirmed-gone relative paths.
+            for loc in &backup_rows {
+                match loc.presence {
+                    Presence::Present if gone_paths.contains(loc.file_path.as_str()) => {
+                        out.delete.push((
                             loc.device_id.clone(),
                             DiffFileEntry {
                                 blake3_hash: loc.blake3_hash.clone(),
@@ -106,47 +189,22 @@ pub fn classify(
                                 location_id: Some(loc.location_id),
                                 source_path: None,
                             },
-                        )),
-                        Presence::Gone => {}
-                        Presence::Unknown => out.unreadable.push(DiffUnreadable {
-                            device_id: loc.device_id.clone(),
-                            relative_path: loc.file_path.clone(),
-                            error: "Could not read on this device".to_string(),
-                        }),
+                        ))
                     }
-                }
-            }
-            Presence::Present => {
-                for device_id in backup_device_ids {
-                    let existing = group.iter().find(|l| l.device_id == *device_id);
-                    match existing.map(|l| l.presence) {
-                        Some(Presence::Present) => {}
-                        Some(Presence::Unknown) => out.unreadable.push(DiffUnreadable {
-                            device_id: device_id.clone(),
-                            relative_path: existing.unwrap().file_path.clone(),
-                            error: "Could not read on this device".to_string(),
-                        }),
-                        // No row at all, or a row whose file is gone.
-                        None | Some(Presence::Gone) => out.copy.push((
-                            device_id.clone(),
-                            DiffFileEntry {
-                                blake3_hash: sot.blake3_hash.clone(),
-                                file_size: sot.file_size,
-                                file_name: sot.file_name.clone(),
-                                relative_path: sot.file_path.clone(),
-                                location_id: None,
-                                source_path: Some(
-                                    Path::new(sot_mount)
-                                        .join(&sot.file_path)
-                                        .to_string_lossy()
-                                        .to_string(),
-                                ),
-                            },
-                        )),
-                    }
+                    // Present at a path the source of truth never indexed:
+                    // no evidence that this path was rejected, so leave it.
+                    Presence::Present => {}
+                    Presence::Gone => {}
+                    Presence::Unknown => out.unreadable.push(DiffUnreadable {
+                        device_id: loc.device_id.clone(),
+                        relative_path: loc.file_path.clone(),
+                        error: "Could not read on this device".to_string(),
+                    }),
                 }
             }
         }
+        // Otherwise the source of truth only told us "unknown": already
+        // reported above, and neither direction may act on it.
     }
 
     out.purge_location_ids.sort_unstable();
@@ -648,6 +706,93 @@ mod tests {
         assert!(out.copy.is_empty());
         assert!(out.purge_location_ids.is_empty());
         assert!(out.unreadable.is_empty());
+    }
+
+    #[test]
+    fn same_hash_same_size_two_paths_on_the_sot() {
+        // The same content sits at two paths on the source of truth. The user
+        // rejected one in Lightroom and kept the other. Deleting the backup's
+        // copy of the kept path would leave the content on the working disk
+        // only — the exact inversion of what this app is for.
+        let probed_locs = vec![
+            probed(1, "sot", "2026-08-14/A/x.cr3", "h1", 100, Presence::Gone),
+            probed(2, "sot", "2026-08-14/B/x.cr3", "h1", 100, Presence::Present),
+            probed(3, "bk1", "2026-08-14/A/x.cr3", "h1", 100, Presence::Present),
+            probed(4, "bk1", "2026-08-14/B/x.cr3", "h1", 100, Presence::Present),
+        ];
+        let out = classify(&probed_locs, "sot", "/Volumes/SoT", &["bk1".to_string()]);
+
+        assert!(
+            out.delete.is_empty(),
+            "content still on the source of truth must not be deleted anywhere"
+        );
+        assert!(out.copy.is_empty(), "the backup already holds this content");
+        // The row for the path that really did vanish is still stale.
+        assert_eq!(out.purge_location_ids, vec![1]);
+    }
+
+    #[test]
+    fn the_choice_of_sot_row_does_not_depend_on_row_order() {
+        // Same group as above with the present row first. Row order out of
+        // SQLite is rowid order, and it must not change the outcome.
+        let reversed = vec![
+            probed(2, "sot", "2026-08-14/B/x.cr3", "h1", 100, Presence::Present),
+            probed(1, "sot", "2026-08-14/A/x.cr3", "h1", 100, Presence::Gone),
+            probed(4, "bk1", "2026-08-14/B/x.cr3", "h1", 100, Presence::Present),
+            probed(3, "bk1", "2026-08-14/A/x.cr3", "h1", 100, Presence::Present),
+        ];
+        let out = classify(&reversed, "sot", "/Volumes/SoT", &["bk1".to_string()]);
+
+        assert!(out.delete.is_empty());
+        assert_eq!(out.purge_location_ids, vec![1]);
+    }
+
+    #[test]
+    fn every_sot_copy_gone_deletes_the_backup_copies_at_those_paths() {
+        // Both paths rejected: the content itself is gone from the source of
+        // truth, so both backup copies go.
+        let probed_locs = vec![
+            probed(1, "sot", "2026-08-14/A/x.cr3", "h1", 100, Presence::Gone),
+            probed(2, "sot", "2026-08-14/B/x.cr3", "h1", 100, Presence::Gone),
+            probed(3, "bk1", "2026-08-14/A/x.cr3", "h1", 100, Presence::Present),
+            probed(4, "bk1", "2026-08-14/B/x.cr3", "h1", 100, Presence::Present),
+        ];
+        let out = classify(&probed_locs, "sot", "/Volumes/SoT", &["bk1".to_string()]);
+
+        let mut ids: Vec<i64> = out.delete.iter().map(|(_, e)| e.location_id.unwrap()).collect();
+        ids.sort();
+        assert_eq!(ids, vec![3, 4]);
+        assert_eq!(out.purge_location_ids, vec![1, 2]);
+    }
+
+    #[test]
+    fn a_backup_copy_at_a_path_the_sot_never_indexed_is_left_alone() {
+        // The source of truth lost A/x.cr3, but the backup keeps this content
+        // at C/x.cr3, a path the index never saw on the source of truth.
+        // There is no evidence that path was rejected.
+        let probed_locs = vec![
+            probed(1, "sot", "2026-08-14/A/x.cr3", "h1", 100, Presence::Gone),
+            probed(2, "bk1", "2026-08-14/C/x.cr3", "h1", 100, Presence::Present),
+        ];
+        let out = classify(&probed_locs, "sot", "/Volumes/SoT", &["bk1".to_string()]);
+
+        assert!(out.delete.is_empty());
+        assert_eq!(out.purge_location_ids, vec![1]);
+    }
+
+    #[test]
+    fn an_unreadable_sot_copy_blocks_deletion_for_the_whole_group() {
+        let probed_locs = vec![
+            probed(1, "sot", "2026-08-14/A/x.cr3", "h1", 100, Presence::Gone),
+            probed(2, "sot", "2026-08-14/B/x.cr3", "h1", 100, Presence::Unknown),
+            probed(3, "bk1", "2026-08-14/A/x.cr3", "h1", 100, Presence::Present),
+        ];
+        let out = classify(&probed_locs, "sot", "/Volumes/SoT", &["bk1".to_string()]);
+
+        assert!(out.delete.is_empty());
+        assert_eq!(out.unreadable.len(), 1);
+        // The confirmed-gone row is still stale and still purged.
+        assert_eq!(out.purge_location_ids, vec![1]);
     }
 
     #[test]
