@@ -4,6 +4,7 @@ use std::path::{Path, PathBuf};
 use std::pin::Pin;
 use std::time::Duration;
 
+use futures::future::join_all;
 use tauri::ipc::Channel;
 use tauri::State;
 use tokio_util::sync::CancellationToken;
@@ -149,14 +150,22 @@ pub async fn get_project_diff_devices(
     let by_id: HashMap<String, StorageDevice> =
         devices.into_iter().map(|d| (d.id.clone(), d)).collect();
 
-    for opt in &mut options {
+    // Verified concurrently: each check can take up to ~20s against a stalled
+    // mount, and a sequential loop over several devices would block the SoT
+    // picker for the sum of all of them. `join_all` preserves the order of
+    // `options`, which the UI renders as-is.
+    let verdicts = join_all(options.iter().map(|opt| async {
         // Reported as connected only if it would actually be usable as a
         // source of truth — an unmounted disk showing as connected here is an
         // invitation to run a diff that proposes deleting the whole project.
-        opt.is_connected = match by_id.get(&opt.device_id) {
+        match by_id.get(&opt.device_id) {
             Some(device) => verify_device_mounted(&state.pool, device).await.is_ok(),
             None => false,
-        };
+        }
+    }))
+    .await;
+    for (opt, is_connected) in options.iter_mut().zip(verdicts) {
+        opt.is_connected = is_connected;
     }
 
     Ok(options)
