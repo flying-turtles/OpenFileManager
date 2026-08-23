@@ -146,13 +146,18 @@ pub async fn update_device_mount_point(
     Ok(())
 }
 
+/// Samples files at random rather than by insertion order: the earliest-
+/// indexed files are also the ones most likely to have been culled or
+/// reorganised since, so a deterministic `ORDER BY id` would bias the
+/// identity check toward files whose absence says nothing about whether the
+/// volume is mounted.
 pub async fn get_device_file_sample(
     pool: &DbPool,
     device_id: &str,
     limit: i64,
 ) -> Result<Vec<FileLocation>, AppError> {
     let rows = sqlx::query_as::<_, FileLocation>(
-        "SELECT * FROM file_locations WHERE device_id = ? ORDER BY id LIMIT ?",
+        "SELECT * FROM file_locations WHERE device_id = ? ORDER BY RANDOM() LIMIT ?",
     )
     .bind(device_id)
     .bind(limit)
