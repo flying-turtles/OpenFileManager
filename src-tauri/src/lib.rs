@@ -131,6 +131,7 @@ pub fn run() {
             commands::get_scan_summary,
             commands::get_scan_cleanup_preview,
             commands::delete_redundant_scanned_files,
+            commands::get_project_diff_devices,
             commands::eject_device,
             commands::create_project,
             commands::get_projects,

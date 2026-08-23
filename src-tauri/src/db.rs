@@ -1242,6 +1242,43 @@ pub async fn get_project_stats(
     })
 }
 
+/// Devices holding at least one file of the project's date window.
+///
+/// `is_connected` is left `false`; only the command layer can probe mounts.
+pub async fn get_project_diff_devices(
+    pool: &DbPool,
+    start_date: &str,
+    end_date: &str,
+) -> Result<Vec<DiffDeviceOption>, AppError> {
+    let rows = sqlx::query_as::<_, (String, String, i64)>(
+        "SELECT fl.device_id, d.label, COUNT(DISTINCT fl.blake3_hash)
+         FROM file_locations fl
+         JOIN storage_devices d ON d.id = fl.device_id
+         WHERE fl.blake3_hash IN (
+             SELECT fl2.blake3_hash
+             FROM file_locations fl2
+             GROUP BY fl2.blake3_hash
+             HAVING MIN(fl2.modified_at) >= ? AND MIN(fl2.modified_at) < date(?, '+1 day')
+         )
+         GROUP BY fl.device_id, d.label
+         ORDER BY d.label",
+    )
+    .bind(start_date)
+    .bind(end_date)
+    .fetch_all(pool)
+    .await?;
+
+    Ok(rows
+        .into_iter()
+        .map(|(device_id, label, file_count)| DiffDeviceOption {
+            device_id,
+            label,
+            file_count,
+            is_connected: false,
+        })
+        .collect())
+}
+
 // --- Network drive queries ---
 
 pub async fn insert_network_drive(pool: &DbPool, drive: &NetworkDrive) -> Result<(), AppError> {
@@ -1784,5 +1821,52 @@ mod tests {
         assert_eq!(sample.len(), 3);
         let all = get_device_file_sample(&pool, "dev-1", 20).await.unwrap();
         assert_eq!(all.len(), 5);
+    }
+
+    #[tokio::test]
+    async fn project_diff_devices_counts_files_per_device() {
+        let pool = test_pool().await;
+        for (id, mount) in [("dev-1", "/Volumes/One"), ("dev-2", "/Volumes/Two")] {
+            upsert_device(
+                &pool,
+                &DetectedDisk {
+                    id: id.into(),
+                    label: format!("{id} label"),
+                    mount_point: mount.into(),
+                    total_bytes: 0,
+                    available_bytes: 0,
+                    is_removable: false,
+                },
+            )
+            .await
+            .unwrap();
+        }
+
+        // Two files inside the project window, one outside it.
+        for (hash, modified) in [
+            ("h1", "2026-08-14 10:00:00"),
+            ("h2", "2026-08-14 11:00:00"),
+            ("h3", "2026-09-01 10:00:00"),
+        ] {
+            upsert_file(&pool, hash, 10, "f.cr3", "cr3").await.unwrap();
+            upsert_location(&pool, hash, "dev-1", &format!("2026/{hash}.cr3"), "f.cr3", 10, Some(modified), "full")
+                .await
+                .unwrap();
+        }
+        // dev-2 holds only one of the in-window files.
+        upsert_location(&pool, "h1", "dev-2", "2026/h1.cr3", "f.cr3", 10, Some("2026-08-14 10:00:00"), "full")
+            .await
+            .unwrap();
+
+        let devices = get_project_diff_devices(&pool, "2026-08-14", "2026-08-14")
+            .await
+            .unwrap();
+
+        assert_eq!(devices.len(), 2);
+        let one = devices.iter().find(|d| d.device_id == "dev-1").unwrap();
+        let two = devices.iter().find(|d| d.device_id == "dev-2").unwrap();
+        assert_eq!(one.file_count, 2, "the September file is out of the window");
+        assert_eq!(two.file_count, 1);
+        assert_eq!(one.label, "dev-1 label");
     }
 }

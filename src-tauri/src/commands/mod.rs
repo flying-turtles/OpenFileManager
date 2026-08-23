@@ -1,5 +1,6 @@
 mod backup;
 mod devices;
+mod diff;
 pub mod files;
 mod import;
 mod move_files;
@@ -66,6 +67,7 @@ async fn mark_connected(mut devices: Vec<StorageDevice>, connected_ids: &HashSet
 
 pub use backup::*;
 pub use devices::*;
+pub use diff::*;
 pub use files::*;
 pub use import::*;
 pub use move_files::*;
