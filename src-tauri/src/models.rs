@@ -548,3 +548,125 @@ pub enum MoveEvent {
     /// Carries the partial result: a cancelled run still reports what it moved.
     Cancelled(MoveResult),
 }
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DiffDeviceOption {
+    pub device_id: String,
+    pub label: String,
+    pub file_count: i64,
+    pub is_connected: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DiffFileEntry {
+    pub blake3_hash: String,
+    pub file_size: i64,
+    pub file_name: String,
+    /// Path relative to the mount of the device this entry belongs to. For a
+    /// copy entry that is the target device, and the value is the mirrored
+    /// source-of-truth relative path.
+    pub relative_path: String,
+    /// The backup `file_locations` row to delete. `None` for copy entries.
+    pub location_id: Option<i64>,
+    /// Absolute path on the source of truth. Set for copy entries only.
+    pub source_path: Option<String>,
+    /// Source-of-truth mtime, carried so a copied file is indexed with the
+    /// same `modified_at` as its source. Project membership is derived from
+    /// `MIN(modified_at)` over a hash's rows, so a `NULL` here would drop the
+    /// file out of its project once the source-of-truth row is purged.
+    pub modified_at: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DiffUnreadable {
+    pub device_id: String,
+    pub relative_path: String,
+    pub error: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DiffDeviceResult {
+    pub device_id: String,
+    pub device_label: String,
+    /// Set when the device was not diffed at all, e.g. it is offline.
+    pub skip_reason: Option<String>,
+    pub to_delete: Vec<DiffFileEntry>,
+    pub to_copy: Vec<DiffFileEntry>,
+    pub delete_bytes: i64,
+    pub copy_bytes: i64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ProjectDiff {
+    pub project_id: i64,
+    pub sot_device_id: String,
+    pub sot_label: String,
+    pub devices: Vec<DiffDeviceResult>,
+    /// Stale source-of-truth rows, purged on resolve.
+    pub purge_location_ids: Vec<i64>,
+    pub unreadable: Vec<DiffUnreadable>,
+    pub total_delete_files: i64,
+    pub total_delete_bytes: i64,
+    pub total_copy_files: i64,
+    pub total_copy_bytes: i64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DiffCopyItem {
+    pub blake3_hash: String,
+    pub file_size: i64,
+    pub file_name: String,
+    pub source_path: String,
+    pub target_device_id: String,
+    /// Relative to the target device's mount point.
+    pub relative_path: String,
+    /// Source-of-truth mtime, indexed with the copied row. See
+    /// `DiffFileEntry::modified_at`.
+    pub modified_at: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DiffCopyError {
+    pub file_name: String,
+    pub target_device_id: String,
+    pub error: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DiffCopyResult {
+    pub copied: i64,
+    pub bytes_copied: i64,
+    /// Targets that already held a file at the mirrored path.
+    pub skipped: Vec<DiffCopyError>,
+    pub failed: Vec<DiffCopyError>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum DiffEvent {
+    Started { total: u64 },
+    #[serde(rename_all = "camelCase")]
+    Progress {
+        checked: u64,
+        total: u64,
+        current_device: String,
+    },
+    Finished,
+    Error { message: String },
+    Cancelled,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum DiffCopyEvent {
+    Progress(DeviceCopyProgress),
+    Complete(DiffCopyResult),
+    Error { message: String },
+    Cancelled,
+}

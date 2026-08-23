@@ -146,13 +146,18 @@ pub async fn update_device_mount_point(
     Ok(())
 }
 
+/// Samples files at random rather than by insertion order: the earliest-
+/// indexed files are also the ones most likely to have been culled or
+/// reorganised since, so a deterministic `ORDER BY id` would bias the
+/// identity check toward files whose absence says nothing about whether the
+/// volume is mounted.
 pub async fn get_device_file_sample(
     pool: &DbPool,
     device_id: &str,
     limit: i64,
 ) -> Result<Vec<FileLocation>, AppError> {
     let rows = sqlx::query_as::<_, FileLocation>(
-        "SELECT * FROM file_locations WHERE device_id = ? ORDER BY id LIMIT ?",
+        "SELECT * FROM file_locations WHERE device_id = ? ORDER BY RANDOM() LIMIT ?",
     )
     .bind(device_id)
     .bind(limit)
@@ -699,12 +704,16 @@ pub async fn delete_file_location(pool: &DbPool, location_id: i64) -> Result<(),
     Ok(())
 }
 
-pub async fn delete_file_location_no_cleanup(pool: &DbPool, location_id: i64) -> Result<(), AppError> {
-    sqlx::query("DELETE FROM file_locations WHERE id = ?")
+/// Deletes one location row and reports how many rows were actually removed
+/// (0 or 1) — the query itself always succeeds even when the id no longer
+/// exists, so callers that need to know whether something really happened
+/// must check `rows_affected`, not just that this returned `Ok`.
+pub async fn delete_file_location_no_cleanup(pool: &DbPool, location_id: i64) -> Result<u64, AppError> {
+    let res = sqlx::query("DELETE FROM file_locations WHERE id = ?")
         .bind(location_id)
         .execute(pool)
         .await?;
-    Ok(())
+    Ok(res.rows_affected())
 }
 
 pub async fn get_waste_candidates(pool: &DbPool, threshold: i64) -> Result<Vec<WasteCandidate>, AppError> {
@@ -1240,6 +1249,43 @@ pub async fn get_project_stats(
         backed_up_pct,
         extensions,
     })
+}
+
+/// Devices holding at least one file of the project's date window.
+///
+/// `is_connected` is left `false`; only the command layer can probe mounts.
+pub async fn get_project_diff_devices(
+    pool: &DbPool,
+    start_date: &str,
+    end_date: &str,
+) -> Result<Vec<DiffDeviceOption>, AppError> {
+    let rows = sqlx::query_as::<_, (String, String, i64)>(
+        "SELECT fl.device_id, d.label, COUNT(DISTINCT fl.blake3_hash)
+         FROM file_locations fl
+         JOIN storage_devices d ON d.id = fl.device_id
+         WHERE fl.blake3_hash IN (
+             SELECT fl2.blake3_hash
+             FROM file_locations fl2
+             GROUP BY fl2.blake3_hash
+             HAVING MIN(fl2.modified_at) >= ? AND MIN(fl2.modified_at) < date(?, '+1 day')
+         )
+         GROUP BY fl.device_id, d.label
+         ORDER BY d.label",
+    )
+    .bind(start_date)
+    .bind(end_date)
+    .fetch_all(pool)
+    .await?;
+
+    Ok(rows
+        .into_iter()
+        .map(|(device_id, label, file_count)| DiffDeviceOption {
+            device_id,
+            label,
+            file_count,
+            is_connected: false,
+        })
+        .collect())
 }
 
 // --- Network drive queries ---
@@ -1784,5 +1830,52 @@ mod tests {
         assert_eq!(sample.len(), 3);
         let all = get_device_file_sample(&pool, "dev-1", 20).await.unwrap();
         assert_eq!(all.len(), 5);
+    }
+
+    #[tokio::test]
+    async fn project_diff_devices_counts_files_per_device() {
+        let pool = test_pool().await;
+        for (id, mount) in [("dev-1", "/Volumes/One"), ("dev-2", "/Volumes/Two")] {
+            upsert_device(
+                &pool,
+                &DetectedDisk {
+                    id: id.into(),
+                    label: format!("{id} label"),
+                    mount_point: mount.into(),
+                    total_bytes: 0,
+                    available_bytes: 0,
+                    is_removable: false,
+                },
+            )
+            .await
+            .unwrap();
+        }
+
+        // Two files inside the project window, one outside it.
+        for (hash, modified) in [
+            ("h1", "2026-08-14 10:00:00"),
+            ("h2", "2026-08-14 11:00:00"),
+            ("h3", "2026-09-01 10:00:00"),
+        ] {
+            upsert_file(&pool, hash, 10, "f.cr3", "cr3").await.unwrap();
+            upsert_location(&pool, hash, "dev-1", &format!("2026/{hash}.cr3"), "f.cr3", 10, Some(modified), "full")
+                .await
+                .unwrap();
+        }
+        // dev-2 holds only one of the in-window files.
+        upsert_location(&pool, "h1", "dev-2", "2026/h1.cr3", "f.cr3", 10, Some("2026-08-14 10:00:00"), "full")
+            .await
+            .unwrap();
+
+        let devices = get_project_diff_devices(&pool, "2026-08-14", "2026-08-14")
+            .await
+            .unwrap();
+
+        assert_eq!(devices.len(), 2);
+        let one = devices.iter().find(|d| d.device_id == "dev-1").unwrap();
+        let two = devices.iter().find(|d| d.device_id == "dev-2").unwrap();
+        assert_eq!(one.file_count, 2, "the September file is out of the window");
+        assert_eq!(two.file_count, 1);
+        assert_eq!(one.label, "dev-1 label");
     }
 }

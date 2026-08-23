@@ -2,6 +2,7 @@ mod backup;
 mod commands;
 mod db;
 mod devices;
+mod diff;
 mod error;
 mod hasher;
 mod importer;
@@ -54,6 +55,8 @@ pub fn run() {
                 transfer_resolved: Arc::new(Mutex::new(None)),
                 similar_cancel_token: Arc::new(Mutex::new(None)),
                 verify_cancel_token: Arc::new(Mutex::new(None)),
+                diff_cancel_token: Arc::new(Mutex::new(None)),
+                diff_copy_cancel_token: Arc::new(Mutex::new(None)),
             });
 
             let handle = app.handle().clone();
@@ -130,6 +133,12 @@ pub fn run() {
             commands::get_scan_summary,
             commands::get_scan_cleanup_preview,
             commands::delete_redundant_scanned_files,
+            commands::get_project_diff_devices,
+            commands::compute_project_diff,
+            commands::cancel_project_diff,
+            commands::copy_diff_files,
+            commands::cancel_diff_copy,
+            commands::purge_diff_locations,
             commands::eject_device,
             commands::create_project,
             commands::get_projects,

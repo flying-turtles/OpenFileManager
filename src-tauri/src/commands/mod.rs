@@ -1,5 +1,6 @@
 mod backup;
 mod devices;
+mod diff;
 pub mod files;
 mod import;
 mod move_files;
@@ -34,6 +35,8 @@ pub struct AppState {
     pub similar_cancel_token: Arc<Mutex<Option<CancellationToken>>>,
     pub verify_cancel_token: Arc<Mutex<Option<CancellationToken>>>,
     pub transfer_resolved: Arc<Mutex<Option<(Vec<ResolvedTransferFile>, String, String, String)>>>,
+    pub diff_cancel_token: Arc<Mutex<Option<CancellationToken>>>,
+    pub diff_copy_cancel_token: Arc<Mutex<Option<CancellationToken>>>,
 }
 
 /// Filesystem stat with a deadline. A stalled network mount can hang stat()
@@ -66,6 +69,7 @@ async fn mark_connected(mut devices: Vec<StorageDevice>, connected_ids: &HashSet
 
 pub use backup::*;
 pub use devices::*;
+pub use diff::*;
 pub use files::*;
 pub use import::*;
 pub use move_files::*;
