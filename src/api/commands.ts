@@ -30,6 +30,12 @@ import type {
   ReconnectCheck,
   MovePlanSummary,
   MoveEvent,
+  DiffDeviceOption,
+  ProjectDiff,
+  DiffEvent,
+  DiffCopyItem,
+  DiffCopyResult,
+  DiffCopyEvent,
 } from "../types";
 
 export async function detectDevices(): Promise<StorageDevice[]> {
@@ -449,4 +455,41 @@ export async function startMove(
 
 export async function cancelMove(): Promise<void> {
   return invoke("cancel_move");
+}
+
+export async function getProjectDiffDevices(
+  projectId: number
+): Promise<DiffDeviceOption[]> {
+  return invoke("get_project_diff_devices", { projectId });
+}
+
+export async function computeProjectDiff(
+  projectId: number,
+  sotDeviceId: string,
+  onEvent: (event: DiffEvent) => void
+): Promise<ProjectDiff> {
+  const channel = new Channel<DiffEvent>();
+  channel.onmessage = onEvent;
+  return invoke("compute_project_diff", { projectId, sotDeviceId, onEvent: channel });
+}
+
+export async function cancelProjectDiff(): Promise<void> {
+  return invoke("cancel_project_diff");
+}
+
+export async function copyDiffFiles(
+  items: DiffCopyItem[],
+  onEvent: (event: DiffCopyEvent) => void
+): Promise<DiffCopyResult> {
+  const channel = new Channel<DiffCopyEvent>();
+  channel.onmessage = onEvent;
+  return invoke("copy_diff_files", { items, onEvent: channel });
+}
+
+export async function cancelDiffCopy(): Promise<void> {
+  return invoke("cancel_diff_copy");
+}
+
+export async function purgeDiffLocations(locationIds: number[]): Promise<number> {
+  return invoke("purge_diff_locations", { locationIds });
 }

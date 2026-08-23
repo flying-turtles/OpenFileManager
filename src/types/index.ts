@@ -362,3 +362,87 @@ export type MoveEvent =
   // Unlike the other event unions, Move's Cancelled carries the partial
   // result — a cancelled run reports what it completed.
   | { Cancelled: MoveResult };
+
+export interface DiffDeviceOption {
+  deviceId: string;
+  label: string;
+  fileCount: number;
+  isConnected: boolean;
+}
+
+export interface DiffFileEntry {
+  blake3Hash: string;
+  fileSize: number;
+  fileName: string;
+  /** Relative to the mount of the device this entry belongs to. */
+  relativePath: string;
+  /** Backup location row to delete. Null for copy entries. */
+  locationId: number | null;
+  /** Absolute path on the source of truth. Set for copy entries only. */
+  sourcePath: string | null;
+}
+
+export interface DiffUnreadable {
+  deviceId: string;
+  relativePath: string;
+  error: string;
+}
+
+export interface DiffDeviceResult {
+  deviceId: string;
+  deviceLabel: string;
+  /** Set when the device was not diffed at all, e.g. it is offline. */
+  skipReason: string | null;
+  toDelete: DiffFileEntry[];
+  toCopy: DiffFileEntry[];
+  deleteBytes: number;
+  copyBytes: number;
+}
+
+export interface ProjectDiff {
+  projectId: number;
+  sotDeviceId: string;
+  sotLabel: string;
+  devices: DiffDeviceResult[];
+  purgeLocationIds: number[];
+  unreadable: DiffUnreadable[];
+  totalDeleteFiles: number;
+  totalDeleteBytes: number;
+  totalCopyFiles: number;
+  totalCopyBytes: number;
+}
+
+export interface DiffCopyItem {
+  blake3Hash: string;
+  fileSize: number;
+  fileName: string;
+  sourcePath: string;
+  targetDeviceId: string;
+  relativePath: string;
+}
+
+export interface DiffCopyError {
+  fileName: string;
+  targetDeviceId: string;
+  error: string;
+}
+
+export interface DiffCopyResult {
+  copied: number;
+  bytesCopied: number;
+  skipped: DiffCopyError[];
+  failed: DiffCopyError[];
+}
+
+export type DiffEvent =
+  | { Started: { total: number } }
+  | { Progress: { checked: number; total: number; currentDevice: string } }
+  | "Finished"
+  | { Error: { message: string } }
+  | "Cancelled";
+
+export type DiffCopyEvent =
+  | { Progress: DeviceCopyProgress }
+  | { Complete: DiffCopyResult }
+  | { Error: { message: string } }
+  | "Cancelled";
