@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useMemo } from "react";
+import { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import {
   computeProjectDiff,
   cancelProjectDiff,
@@ -107,14 +107,19 @@ export function useProjectDiff(projectId: number, sotDeviceId: string) {
   const [resolveResult, setResolveResult] = useState<ResolveResult | null>(null);
   const [reloadKey, setReloadKey] = useState(0);
 
+  // Shared with handleEvent so a superseded/unmounted run's Progress and
+  // Error events stop reaching state, not just its terminal .then/.catch.
+  const cancelledRef = useRef(false);
+
   const handleEvent = useCallback((event: DiffEvent) => {
+    if (cancelledRef.current) return;
     if (typeof event === "string") return;
     if ("Progress" in event) setProgress(event.Progress);
     else if ("Error" in event) setError(event.Error.message);
   }, []);
 
   useEffect(() => {
-    let cancelled = false;
+    cancelledRef.current = false;
     setPhase("computing");
     setError("");
     setDiff(null);
@@ -123,7 +128,7 @@ export function useProjectDiff(projectId: number, sotDeviceId: string) {
 
     computeProjectDiff(projectId, sotDeviceId, handleEvent)
       .then((d) => {
-        if (cancelled) return;
+        if (cancelledRef.current) return;
         setDiff(d);
         // Both directions start fully selected: the point of the feature is
         // to bring the backups in line unless the user says otherwise.
@@ -138,13 +143,18 @@ export function useProjectDiff(projectId: number, sotDeviceId: string) {
         setPhase("ready");
       })
       .catch((e) => {
-        if (cancelled) return;
+        if (cancelledRef.current) return;
         setError(String(e));
         setPhase("error");
       });
 
     return () => {
-      cancelled = true;
+      cancelledRef.current = true;
+      // The backend run keeps probing and emitting events until told to
+      // stop — losing our reference to it (e.g. on reload() or unmount)
+      // isn't enough. Cancelling an already-finished run is a no-op, so
+      // its rejection is swallowed.
+      cancelProjectDiff().catch(() => {});
     };
   }, [projectId, sotDeviceId, reloadKey, handleEvent]);
 
@@ -217,50 +227,66 @@ export function useProjectDiff(projectId: number, sotDeviceId: string) {
       let deleted: BulkDeleteResult | null = null;
       let copied: DiffCopyResult | null = null;
       let purged = 0;
+      const errors: string[] = [];
 
       try {
-        if (deleteLocationIds.length > 0) {
-          setResolveProgress("Deleting from backups...");
-          deleted = await bulkDeleteFileCopies(
-            deleteLocationIds,
-            (event) => {
-              if ("Progress" in event) {
+        try {
+          if (deleteLocationIds.length > 0) {
+            setResolveProgress("Deleting from backups...");
+            deleted = await bulkDeleteFileCopies(
+              deleteLocationIds,
+              (event) => {
+                if ("Progress" in event) {
+                  setResolveProgress(
+                    `Deleting ${event.Progress.processed} / ${event.Progress.total}`
+                  );
+                }
+              },
+              permanent
+            );
+          }
+        } catch (e: any) {
+          errors.push(String(e));
+        }
+
+        try {
+          if (copyItems.length > 0) {
+            setResolveProgress("Copying to backups...");
+            copied = await copyDiffFiles(copyItems, (event) => {
+              if (typeof event !== "string" && "Progress" in event) {
+                const p = event.Progress;
                 setResolveProgress(
-                  `Deleting ${event.Progress.processed} / ${event.Progress.total}`
+                  `Copying ${p.filesCopied} / ${p.totalFiles} - ${p.currentFile}`
                 );
               }
-            },
-            permanent
+            });
+          }
+        } catch (e: any) {
+          errors.push(String(e));
+        }
+
+        // Unconditional: an index row pointing at a file that's gone from
+        // disk is wrong whether or not delete/copy above succeeded, so the
+        // purge must run even after one of them throws.
+        try {
+          if (diff.purgeLocationIds.length > 0) {
+            setResolveProgress("Updating the index...");
+            purged = await purgeDiffLocations(diff.purgeLocationIds);
+          }
+        } catch (e: any) {
+          errors.push(String(e));
+        }
+
+        setResolveResult({ deleted, copied, purged });
+        setPhase("done");
+        if (errors.length > 0) {
+          setError(errors.join("; "));
+        } else {
+          notifyDone(
+            "Diff resolved",
+            `${deleted?.succeeded.length ?? 0} deleted, ${copied?.copied ?? 0} copied`
           );
         }
-
-        if (copyItems.length > 0) {
-          setResolveProgress("Copying to backups...");
-          copied = await copyDiffFiles(copyItems, (event) => {
-            if (typeof event !== "string" && "Progress" in event) {
-              const p = event.Progress;
-              setResolveProgress(
-                `Copying ${p.filesCopied} / ${p.totalFiles} - ${p.currentFile}`
-              );
-            }
-          });
-        }
-
-        if (diff.purgeLocationIds.length > 0) {
-          setResolveProgress("Updating the index...");
-          purged = await purgeDiffLocations(diff.purgeLocationIds);
-        }
-
-        setResolveResult({ deleted, copied, purged });
-        setPhase("done");
-        notifyDone(
-          "Diff resolved",
-          `${deleted?.succeeded.length ?? 0} deleted, ${copied?.copied ?? 0} copied`
-        );
-      } catch (e: any) {
-        setError(String(e));
-        setResolveResult({ deleted, copied, purged });
-        setPhase("done");
       } finally {
         setResolveProgress("");
       }
