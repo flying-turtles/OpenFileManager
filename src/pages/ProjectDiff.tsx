@@ -14,6 +14,17 @@ import "./ProjectDiff.css";
 
 type Section = "delete" | "copy";
 
+// Above this many files in a device+section, folders start collapsed on
+// load. Below it, everything expands — the common case is a handful of
+// Lightroom rejects and should stay fully visible. This must be checked
+// once per device section, not per folder: `buildTree` only attaches files
+// to their leaf directory node, so a folder of subfolders always reports
+// zero direct files and a per-folder check never bounds anything. Import
+// lays files out as `<mount>/YYYY-MM-DD/<filename>`, so a multi-day shoot
+// is exactly this shape - many depth-1 folders, each under any reasonable
+// per-folder cap, all auto-opening at once.
+const AUTO_EXPAND_FILE_THRESHOLD = 500;
+
 interface Props {
   projectId: number;
   projectTitle: string;
@@ -63,6 +74,7 @@ function Folder({
   toggleKeys,
   previewDeviceId,
   depth,
+  sectionExpanded,
 }: {
   deviceId: string;
   node: TreeNode;
@@ -71,10 +83,15 @@ function Folder({
   toggleKeys: (section: Section, keys: string[], next: boolean) => void;
   previewDeviceId: string;
   depth: number;
+  sectionExpanded: boolean;
 }) {
-  // Deep folders and very large ones start closed: a day folder with
-  // thousands of files should not render thousands of rows unasked.
-  const [open, setOpen] = useState(depth < 2 && node.files.length <= 500);
+  // depth 0 is the tree root: it has no header (node.path === "" below
+  // skips it) and therefore no toggle, so it must always let its children
+  // through or nothing - not even the day-folder headers - could ever be
+  // reached. Only depth 1 (the day folders, which do have a header and
+  // toggle) is actually gated by the section-level size decision; depth 2+
+  // always starts closed.
+  const [open, setOpen] = useState(depth === 0 || (sectionExpanded && depth < 2));
   const keys = useMemo(() => collectKeys(deviceId, node), [deviceId, node]);
   const state = folderState(keys, selected);
 
@@ -102,6 +119,7 @@ function Folder({
               toggleKeys={toggleKeys}
               previewDeviceId={previewDeviceId}
               depth={depth + 1}
+              sectionExpanded={sectionExpanded}
             />
           ))}
           {node.files.map((file) => {
@@ -144,6 +162,10 @@ function DeviceSection({
 }) {
   const entries = section === "delete" ? device.toDelete : device.toCopy;
   const tree = useMemo(() => buildTree(entries), [entries]);
+  // Hoisted above the early returns below: hooks can't be called
+  // conditionally, and this component returns early for skipped or
+  // empty devices.
+  const keys = useMemo(() => collectKeys(device.deviceId, tree), [device.deviceId, tree]);
 
   if (device.skipReason) {
     return (
@@ -158,8 +180,8 @@ function DeviceSection({
   // Deletions preview from the backup that still holds the file; copies
   // preview from the source of truth, the only place they exist.
   const previewDeviceId = section === "delete" ? device.deviceId : sotDeviceId;
-  const keys = collectKeys(device.deviceId, tree);
   const bytes = section === "delete" ? device.deleteBytes : device.copyBytes;
+  const sectionExpanded = entries.length <= AUTO_EXPAND_FILE_THRESHOLD;
 
   return (
     <div className="diff-device">
@@ -181,6 +203,7 @@ function DeviceSection({
         toggleKeys={toggleKeys}
         previewDeviceId={previewDeviceId}
         depth={0}
+        sectionExpanded={sectionExpanded}
       />
     </div>
   );
