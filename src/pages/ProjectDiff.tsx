@@ -8,6 +8,7 @@ import {
   type TreeNode,
 } from "../hooks/useProjectDiff";
 import { LazyThumb } from "../components/LazyThumb";
+import { DiffResolveModal, type DeletePreviewItem } from "../components/DiffResolveModal";
 import { formatBytes } from "../utils/format";
 import type { DiffDeviceResult, DiffFileEntry, FileLocation } from "../types";
 import "./ProjectDiff.css";
@@ -222,10 +223,39 @@ export function ProjectDiff({ projectId, projectTitle, sotDeviceId, onBack }: Pr
     toggleKeys,
     setAll,
     cancel,
+    resolve,
+    resolveProgress,
+    resolveResult,
+    reload,
   } = useProjectDiff(projectId, sotDeviceId);
 
   const [section, setSection] = useState<Section>("delete");
+  const [resolving, setResolving] = useState(false);
   const selected = section === "delete" ? selectedDelete : selectedCopy;
+
+  const deletePreviewItems = useMemo<DeletePreviewItem[]>(() => {
+    if (!diff) return [];
+    const items: DeletePreviewItem[] = [];
+    for (const device of diff.devices) {
+      for (const e of device.toDelete) {
+        const key = entryKey(device.deviceId, e.relativePath);
+        if (!selectedDelete.has(key)) continue;
+        items.push({
+          key,
+          fileName: e.fileName,
+          fileSize: e.fileSize,
+          deviceLabel: device.deviceLabel,
+          location: previewLocation(device.deviceId, e),
+        });
+      }
+    }
+    return items;
+  }, [diff, selectedDelete]);
+
+  const selectedCopyBytes = useMemo(
+    () => copyItems.reduce((sum, i) => sum + i.fileSize, 0),
+    [copyItems]
+  );
 
   return (
     <div className="page">
@@ -240,6 +270,16 @@ export function ProjectDiff({ projectId, projectTitle, sotDeviceId, onBack }: Pr
         </div>
         <div className="flex-row gap-8">
           <button onClick={onBack}>Back</button>
+          <button
+            className="btn-danger"
+            disabled={
+              phase !== "ready" ||
+              (deleteLocationIds.length === 0 && copyItems.length === 0)
+            }
+            onClick={() => setResolving(true)}
+          >
+            Resolve diff
+          </button>
         </div>
       </div>
 
@@ -336,6 +376,27 @@ export function ProjectDiff({ projectId, projectTitle, sotDeviceId, onBack }: Pr
             ))}
           </div>
         </>
+      )}
+
+      {resolving && diff && (
+        <DiffResolveModal
+          sotLabel={diff.sotLabel}
+          deleteItems={deletePreviewItems}
+          copyCount={copyItems.length}
+          copyBytes={selectedCopyBytes}
+          purgeCount={diff.purgeLocationIds.length}
+          busy={phase === "resolving"}
+          progressText={resolveProgress}
+          result={resolveResult}
+          onConfirm={resolve}
+          onClose={() => {
+            const didResolve = resolveResult !== null;
+            setResolving(false);
+            // The index and the disks both moved; recompute rather than show
+            // a diff that no longer describes reality.
+            if (didResolve) reload();
+          }}
+        />
       )}
     </div>
   );
