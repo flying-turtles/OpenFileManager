@@ -244,7 +244,16 @@ pub async fn copy_diff_files(
     let mounts: HashMap<String, String> =
         devices.into_iter().map(|d| (d.id, d.mount_point)).collect();
 
-    let result = diff::run_diff_copy(&state.pool, items, &mounts, &on_event, &cancel).await;
+    let result = diff::run_diff_copy(
+        &state.pool,
+        items,
+        &mounts,
+        |e| {
+            let _ = on_event.send(e);
+        },
+        &cancel,
+    )
+    .await;
 
     *state.diff_copy_cancel_token.lock().await = None;
     Ok(result)
@@ -269,11 +278,9 @@ pub async fn purge_diff_locations(
 ) -> Result<u64, AppError> {
     let mut purged: u64 = 0;
     for id in location_ids {
-        if db::delete_file_location_no_cleanup(&state.pool, id)
-            .await
-            .is_ok()
-        {
-            purged += 1;
+        match db::delete_file_location_no_cleanup(&state.pool, id).await {
+            Ok(rows_affected) => purged += rows_affected,
+            Err(e) => log::warn!("Failed to purge diff location {}: {}", id, e),
         }
     }
     if purged > 0 {

@@ -247,15 +247,33 @@ pub fn may_write_target(presence: Presence) -> bool {
     presence == Presence::Gone
 }
 
+/// Whether a `relative_path` from IPC is safe to root under a target mount.
+///
+/// `PathBuf::join` silently discards the base when the joined path is
+/// absolute, and never resolves `..`. Both would let a copy land outside the
+/// target mount. Checked via `Component`, not string matching on "..", so a
+/// filename that merely contains dots is not caught.
+fn is_safe_relative_path(relative_path: &str) -> bool {
+    let path = Path::new(relative_path);
+    if path.is_absolute() {
+        return false;
+    }
+    !path
+        .components()
+        .any(|c| matches!(c, std::path::Component::ParentDir))
+}
+
 /// Copies each item to its target device, indexing what lands.
 ///
 /// An occupied target is skipped, never overwritten — this feature only ever
-/// adds files a backup is missing.
+/// adds files a backup is missing. `on_event` is called synchronously for
+/// each progress/terminal event, decoupling this from the `Channel` IPC type
+/// so it is directly testable.
 pub async fn run_diff_copy(
     pool: &DbPool,
     items: Vec<DiffCopyItem>,
     mounts: &HashMap<String, String>,
-    channel: &Channel<DiffCopyEvent>,
+    on_event: impl Fn(DiffCopyEvent),
     cancel: &CancellationToken,
 ) -> DiffCopyResult {
     let mut result = DiffCopyResult {
@@ -270,7 +288,7 @@ pub async fn run_diff_copy(
 
     for item in items {
         if cancel.is_cancelled() {
-            let _ = channel.send(DiffCopyEvent::Cancelled);
+            on_event(DiffCopyEvent::Cancelled);
             return result;
         }
 
@@ -286,9 +304,18 @@ pub async fn run_diff_copy(
             }
         };
 
+        if !is_safe_relative_path(&item.relative_path) {
+            result.failed.push(DiffCopyError {
+                file_name: item.file_name.clone(),
+                target_device_id: item.target_device_id.clone(),
+                error: "Refused: relative path escapes the target mount".to_string(),
+            });
+            continue;
+        }
+
         let dest = plan_copy_target(Path::new(&mount), &item.relative_path);
 
-        let _ = channel.send(DiffCopyEvent::Progress(DeviceCopyProgress {
+        on_event(DiffCopyEvent::Progress(DeviceCopyProgress {
             device_id: item.target_device_id.clone(),
             device_label: item.target_device_id.clone(),
             bytes_copied: result.bytes_copied,
@@ -298,12 +325,23 @@ pub async fn run_diff_copy(
             current_file: item.file_name.clone(),
         }));
 
-        if !may_write_target(probe_path(dest.clone(), PROBE_TIMEOUT_SECS).await) {
-            result.skipped.push(DiffCopyError {
-                file_name: item.file_name.clone(),
-                target_device_id: item.target_device_id.clone(),
-                error: "A file already exists at the target path".to_string(),
-            });
+        let presence = probe_path(dest.clone(), PROBE_TIMEOUT_SECS).await;
+        if !may_write_target(presence) {
+            // `Present` and `Unknown` are different faults: an occupied
+            // target is expected and benign, but an unreadable one hides a
+            // real error and must not be reported as "already exists".
+            match presence {
+                Presence::Present => result.skipped.push(DiffCopyError {
+                    file_name: item.file_name.clone(),
+                    target_device_id: item.target_device_id.clone(),
+                    error: "A file already exists at the target path".to_string(),
+                }),
+                _ => result.failed.push(DiffCopyError {
+                    file_name: item.file_name.clone(),
+                    target_device_id: item.target_device_id.clone(),
+                    error: "Could not read the target path".to_string(),
+                }),
+            }
             continue;
         }
 
@@ -349,7 +387,7 @@ pub async fn run_diff_copy(
                 .await;
             }
             Ok(false) => {
-                let _ = channel.send(DiffCopyEvent::Cancelled);
+                on_event(DiffCopyEvent::Cancelled);
                 return result;
             }
             Err(e) => {
@@ -363,7 +401,7 @@ pub async fn run_diff_copy(
         }
     }
 
-    let _ = channel.send(DiffCopyEvent::Complete(result.clone()));
+    on_event(DiffCopyEvent::Complete(result.clone()));
     result
 }
 
@@ -417,6 +455,165 @@ mod tests {
         assert_eq!(presence, Presence::Present);
         assert!(!may_write_target(presence), "the copy must be refused");
         assert_eq!(std::fs::read(&occupied).unwrap(), b"original");
+    }
+
+    #[test]
+    fn an_absolute_relative_path_is_rejected() {
+        assert!(!is_safe_relative_path("/etc/foo"));
+    }
+
+    #[test]
+    fn a_relative_path_containing_parent_dir_is_rejected() {
+        assert!(!is_safe_relative_path(
+            "../../../Library/LaunchAgents/x.plist"
+        ));
+    }
+
+    #[test]
+    fn an_ordinary_relative_path_is_accepted() {
+        assert!(is_safe_relative_path("2026-08-14/RAW/a.cr3"));
+    }
+
+    #[test]
+    fn a_filename_that_merely_contains_dots_is_not_caught() {
+        // Component-based checking, not string matching on "..".
+        assert!(is_safe_relative_path("2026-08-14/RAW/a..b.cr3"));
+    }
+
+    async fn test_diff_pool() -> DbPool {
+        let dir = tempfile::tempdir().unwrap();
+        let pool = db::init_pool(&dir.path().join("test.db")).await.unwrap();
+        db::run_migrations(&pool).await.unwrap();
+        // Leak the tempdir so the backing file survives for the pool's life;
+        // each test gets its own directory so this does not accumulate.
+        std::mem::forget(dir);
+        pool
+    }
+
+    /// Seeds a `storage_devices` row so inserts into `file_locations` (which
+    /// carries a foreign key on `device_id`) succeed. Mirrors the real
+    /// `copy_diff_files` command, whose `mounts` map is built from
+    /// `db::get_all_devices` and so is always backed by a devices row.
+    async fn seed_device(pool: &DbPool, id: &str, mount_point: &str) {
+        db::upsert_device(
+            pool,
+            &DetectedDisk {
+                id: id.to_string(),
+                label: id.to_string(),
+                mount_point: mount_point.to_string(),
+                total_bytes: 0,
+                available_bytes: 0,
+                is_removable: false,
+            },
+        )
+        .await
+        .unwrap();
+    }
+
+    #[tokio::test]
+    async fn run_diff_copy_skips_an_occupied_target_and_leaves_it_untouched() {
+        let pool = test_diff_pool().await;
+        let tmp = tempfile::tempdir().unwrap();
+        let src_dir = tmp.path().join("sot");
+        let dst_dir = tmp.path().join("backup");
+        std::fs::create_dir_all(&src_dir).unwrap();
+        std::fs::create_dir_all(&dst_dir).unwrap();
+        std::fs::write(src_dir.join("a.cr3"), b"new content").unwrap();
+        std::fs::write(dst_dir.join("a.cr3"), b"original").unwrap();
+        seed_device(&pool, "bk1", &dst_dir.to_string_lossy()).await;
+
+        let items = vec![DiffCopyItem {
+            blake3_hash: "h1".to_string(),
+            file_size: 11,
+            file_name: "a.cr3".to_string(),
+            source_path: src_dir.join("a.cr3").to_string_lossy().into_owned(),
+            target_device_id: "bk1".to_string(),
+            relative_path: "a.cr3".to_string(),
+        }];
+        let mut mounts = HashMap::new();
+        mounts.insert("bk1".to_string(), dst_dir.to_string_lossy().into_owned());
+        let cancel = CancellationToken::new();
+
+        let result = run_diff_copy(&pool, items, &mounts, |_| {}, &cancel).await;
+
+        assert_eq!(result.copied, 0);
+        assert_eq!(result.skipped.len(), 1);
+        assert!(result.failed.is_empty());
+        assert_eq!(std::fs::read(dst_dir.join("a.cr3")).unwrap(), b"original");
+    }
+
+    #[tokio::test]
+    async fn run_diff_copy_copies_an_absent_target_and_indexes_it() {
+        let pool = test_diff_pool().await;
+        let tmp = tempfile::tempdir().unwrap();
+        let src_dir = tmp.path().join("sot");
+        let dst_dir = tmp.path().join("backup");
+        std::fs::create_dir_all(&src_dir).unwrap();
+        std::fs::create_dir_all(&dst_dir).unwrap();
+        let content = b"raw photo bytes";
+        std::fs::write(src_dir.join("a.cr3"), content).unwrap();
+        seed_device(&pool, "bk1", &dst_dir.to_string_lossy()).await;
+
+        let items = vec![DiffCopyItem {
+            blake3_hash: "h1".to_string(),
+            file_size: content.len() as i64,
+            file_name: "a.cr3".to_string(),
+            source_path: src_dir.join("a.cr3").to_string_lossy().into_owned(),
+            target_device_id: "bk1".to_string(),
+            relative_path: "2026-08-14/a.cr3".to_string(),
+        }];
+        let mut mounts = HashMap::new();
+        mounts.insert("bk1".to_string(), dst_dir.to_string_lossy().into_owned());
+        let cancel = CancellationToken::new();
+
+        let result = run_diff_copy(&pool, items, &mounts, |_| {}, &cancel).await;
+
+        assert_eq!(result.copied, 1);
+        assert_eq!(result.bytes_copied, content.len() as i64);
+        assert!(result.failed.is_empty());
+        assert!(result.skipped.is_empty());
+        assert_eq!(
+            std::fs::read(dst_dir.join("2026-08-14/a.cr3")).unwrap(),
+            content
+        );
+
+        let locations = db::get_files_on_device(&pool, "bk1").await.unwrap();
+        assert_eq!(locations.len(), 1);
+        assert_eq!(locations[0].scan_mode, "diff-sync");
+        assert_eq!(locations[0].file_path, "2026-08-14/a.cr3");
+    }
+
+    #[tokio::test]
+    async fn run_diff_copy_refuses_a_traversing_relative_path() {
+        let pool = test_diff_pool().await;
+        let tmp = tempfile::tempdir().unwrap();
+        let src_dir = tmp.path().join("sot");
+        let dst_dir = tmp.path().join("backup");
+        std::fs::create_dir_all(&src_dir).unwrap();
+        std::fs::create_dir_all(&dst_dir).unwrap();
+        std::fs::write(src_dir.join("a.cr3"), b"secret").unwrap();
+
+        let items = vec![DiffCopyItem {
+            blake3_hash: "h1".to_string(),
+            file_size: 6,
+            file_name: "a.cr3".to_string(),
+            source_path: src_dir.join("a.cr3").to_string_lossy().into_owned(),
+            target_device_id: "bk1".to_string(),
+            relative_path: "../../../etc/a.cr3".to_string(),
+        }];
+        let mut mounts = HashMap::new();
+        mounts.insert("bk1".to_string(), dst_dir.to_string_lossy().into_owned());
+        let cancel = CancellationToken::new();
+
+        let result = run_diff_copy(&pool, items, &mounts, |_| {}, &cancel).await;
+
+        assert_eq!(result.copied, 0);
+        assert_eq!(result.failed.len(), 1);
+        assert!(!tmp.path().join("etc/a.cr3").exists());
+        assert!(db::get_files_on_device(&pool, "bk1")
+            .await
+            .unwrap()
+            .is_empty());
     }
 
     #[test]

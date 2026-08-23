@@ -699,12 +699,16 @@ pub async fn delete_file_location(pool: &DbPool, location_id: i64) -> Result<(),
     Ok(())
 }
 
-pub async fn delete_file_location_no_cleanup(pool: &DbPool, location_id: i64) -> Result<(), AppError> {
-    sqlx::query("DELETE FROM file_locations WHERE id = ?")
+/// Deletes one location row and reports how many rows were actually removed
+/// (0 or 1) — the query itself always succeeds even when the id no longer
+/// exists, so callers that need to know whether something really happened
+/// must check `rows_affected`, not just that this returned `Ok`.
+pub async fn delete_file_location_no_cleanup(pool: &DbPool, location_id: i64) -> Result<u64, AppError> {
+    let res = sqlx::query("DELETE FROM file_locations WHERE id = ?")
         .bind(location_id)
         .execute(pool)
         .await?;
-    Ok(())
+    Ok(res.rows_affected())
 }
 
 pub async fn get_waste_candidates(pool: &DbPool, threshold: i64) -> Result<Vec<WasteCandidate>, AppError> {
