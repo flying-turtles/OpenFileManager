@@ -40,6 +40,9 @@ pub struct ProbedLocation {
     pub file_name: String,
     pub file_size: i64,
     pub blake3_hash: String,
+    /// Carried through from the index so a copy can be written with the same
+    /// mtime it had on the source of truth.
+    pub modified_at: Option<String>,
     pub presence: Presence,
 }
 
@@ -171,6 +174,7 @@ pub fn classify(
                                 .to_string_lossy()
                                 .to_string(),
                         ),
+                        modified_at: sot.modified_at.clone(),
                     },
                 ));
             }
@@ -190,6 +194,7 @@ pub fn classify(
                                 relative_path: loc.file_path.clone(),
                                 location_id: Some(loc.location_id),
                                 source_path: None,
+                                modified_at: loc.modified_at.clone(),
                             },
                         ))
                     }
@@ -299,6 +304,7 @@ pub async fn probe_locations(
                 file_name: loc.file_name,
                 file_size: loc.file_size,
                 blake3_hash: loc.blake3_hash,
+                modified_at: loc.modified_at,
                 presence,
             })
         }));
@@ -477,33 +483,63 @@ pub async fn run_diff_copy(
 
         match copy_file_cancellable(&item.source_path, &dest, cancel).await {
             Ok(true) => {
-                result.copied += 1;
-                result.bytes_copied += item.file_size;
-
                 let extension = dest
                     .extension()
                     .unwrap_or_default()
                     .to_string_lossy()
                     .to_lowercase();
-                let _ = db::upsert_file(
+
+                // A file on the backup that the index does not know about is
+                // invisible to the next diff, which proposes copying it again
+                // and then reports "already exists". Report the write failure
+                // per file, the way `mover` does, instead of counting the copy
+                // as a clean success.
+                if let Err(e) = db::upsert_file(
                     pool,
                     &item.blake3_hash,
                     item.file_size,
                     &item.file_name,
                     &extension,
                 )
-                .await;
-                let _ = db::upsert_location(
+                .await
+                {
+                    result.failed.push(DiffCopyError {
+                        file_name: item.file_name.clone(),
+                        target_device_id: item.target_device_id.clone(),
+                        error: format!(
+                            "file copied to {} but could not be indexed: {}",
+                            dest.display(),
+                            e
+                        ),
+                    });
+                    continue;
+                }
+                if let Err(e) = db::upsert_location(
                     pool,
                     &item.blake3_hash,
                     &item.target_device_id,
                     &item.relative_path,
                     &item.file_name,
                     item.file_size,
-                    None,
+                    item.modified_at.as_deref(),
                     "diff-sync",
                 )
-                .await;
+                .await
+                {
+                    result.failed.push(DiffCopyError {
+                        file_name: item.file_name.clone(),
+                        target_device_id: item.target_device_id.clone(),
+                        error: format!(
+                            "file copied to {} but could not be indexed: {}",
+                            dest.display(),
+                            e
+                        ),
+                    });
+                    continue;
+                }
+
+                result.copied += 1;
+                result.bytes_copied += item.file_size;
             }
             Ok(false) => {
                 on_event(DiffCopyEvent::Cancelled);
@@ -543,6 +579,7 @@ mod tests {
             file_name: path.rsplit('/').next().unwrap().to_string(),
             file_size: size,
             blake3_hash: hash.to_string(),
+            modified_at: Some("2026-08-14 10:00:00".to_string()),
             presence,
         }
     }
@@ -648,6 +685,7 @@ mod tests {
             source_path: src_dir.join("a.cr3").to_string_lossy().into_owned(),
             target_device_id: "bk1".to_string(),
             relative_path: "a.cr3".to_string(),
+            modified_at: Some("2026-08-14 10:00:00".to_string()),
         }];
         let mut mounts = HashMap::new();
         mounts.insert("bk1".to_string(), dst_dir.to_string_lossy().into_owned());
@@ -680,6 +718,7 @@ mod tests {
             source_path: src_dir.join("a.cr3").to_string_lossy().into_owned(),
             target_device_id: "bk1".to_string(),
             relative_path: "2026-08-14/a.cr3".to_string(),
+            modified_at: Some("2026-08-14 10:00:00".to_string()),
         }];
         let mut mounts = HashMap::new();
         mounts.insert("bk1".to_string(), dst_dir.to_string_lossy().into_owned());
@@ -700,6 +739,51 @@ mod tests {
         assert_eq!(locations.len(), 1);
         assert_eq!(locations[0].scan_mode, "diff-sync");
         assert_eq!(locations[0].file_path, "2026-08-14/a.cr3");
+        // Project membership is MIN(modified_at) over a hash's rows. A NULL
+        // here drops the file out of its project the moment the
+        // source-of-truth row is purged.
+        assert_eq!(
+            locations[0].modified_at.as_deref(),
+            Some("2026-08-14 10:00:00")
+        );
+    }
+
+    #[tokio::test]
+    async fn run_diff_copy_reports_a_file_it_could_not_index() {
+        let pool = test_diff_pool().await;
+        let tmp = tempfile::tempdir().unwrap();
+        let src_dir = tmp.path().join("sot");
+        let dst_dir = tmp.path().join("backup");
+        std::fs::create_dir_all(&src_dir).unwrap();
+        std::fs::create_dir_all(&dst_dir).unwrap();
+        std::fs::write(src_dir.join("a.cr3"), b"raw photo bytes").unwrap();
+        // No storage_devices row for "bk1", so upsert_location's FOREIGN KEY
+        // on device_id fails.
+
+        let items = vec![DiffCopyItem {
+            blake3_hash: "h1".to_string(),
+            file_size: 15,
+            file_name: "a.cr3".to_string(),
+            source_path: src_dir.join("a.cr3").to_string_lossy().into_owned(),
+            target_device_id: "bk1".to_string(),
+            relative_path: "a.cr3".to_string(),
+            modified_at: Some("2026-08-14 10:00:00".to_string()),
+        }];
+        let mut mounts = HashMap::new();
+        mounts.insert("bk1".to_string(), dst_dir.to_string_lossy().into_owned());
+
+        let result = run_diff_copy(&pool, items, &mounts, |_| {}, &CancellationToken::new()).await;
+
+        // The bytes landed, but the index does not know about them — the next
+        // diff would propose the same copy again and then call it a skip.
+        assert!(dst_dir.join("a.cr3").exists());
+        assert_eq!(result.copied, 0);
+        assert_eq!(result.failed.len(), 1);
+        assert!(
+            result.failed[0].error.contains("could not be indexed"),
+            "got: {}",
+            result.failed[0].error
+        );
     }
 
     #[tokio::test]
@@ -719,6 +803,7 @@ mod tests {
             source_path: src_dir.join("a.cr3").to_string_lossy().into_owned(),
             target_device_id: "bk1".to_string(),
             relative_path: "../../../etc/a.cr3".to_string(),
+            modified_at: None,
         }];
         let mut mounts = HashMap::new();
         mounts.insert("bk1".to_string(), dst_dir.to_string_lossy().into_owned());
@@ -985,6 +1070,60 @@ mod tests {
 
     fn null_channel() -> Channel<DiffEvent> {
         Channel::new(|_| Ok(()))
+    }
+
+    #[tokio::test]
+    async fn probe_locations_ignores_devices_with_no_mount() {
+        // A backup left out of `mounts` is out of the diff. Probing it
+        // through a mount point we do not have would report every one of its
+        // files as missing.
+        let tmp = tempfile::tempdir().unwrap();
+        std::fs::write(tmp.path().join("a.cr3"), b"x").unwrap();
+
+        let locations = vec![
+            location(1, "dev-1", "a.cr3"),
+            location(2, "dev-2", "a.cr3"),
+            location(3, "dev-2", "b.cr3"),
+        ];
+        let mut mounts = HashMap::new();
+        mounts.insert("dev-1".to_string(), tmp.path().to_string_lossy().into_owned());
+
+        let pass = probe_locations(
+            locations,
+            &mounts,
+            &CancellationToken::new(),
+            &null_channel(),
+            None,
+        )
+        .await;
+
+        assert!(!pass.sot_lost);
+        assert_eq!(pass.probed.len(), 1);
+        assert_eq!(pass.probed[0].device_id, "dev-1");
+        assert!(pass.probed.iter().all(|p| p.device_id != "dev-2"));
+    }
+
+    #[tokio::test]
+    async fn probe_locations_carries_the_indexed_mtime_through() {
+        let tmp = tempfile::tempdir().unwrap();
+        std::fs::write(tmp.path().join("a.cr3"), b"x").unwrap();
+        let mut mounts = HashMap::new();
+        mounts.insert("dev-1".to_string(), tmp.path().to_string_lossy().into_owned());
+
+        let pass = probe_locations(
+            vec![location(1, "dev-1", "a.cr3")],
+            &mounts,
+            &CancellationToken::new(),
+            &null_channel(),
+            None,
+        )
+        .await;
+
+        assert_eq!(pass.probed[0].presence, Presence::Present);
+        assert_eq!(
+            pass.probed[0].modified_at.as_deref(),
+            Some("2026-08-14 10:00:00")
+        );
     }
 
     struct AlwaysLost;

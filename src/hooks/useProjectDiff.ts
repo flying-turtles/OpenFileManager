@@ -224,6 +224,7 @@ export function useProjectDiff(projectId: number, sotDeviceId: string) {
             sourcePath: e.sourcePath,
             targetDeviceId: device.deviceId,
             relativePath: e.relativePath,
+            modifiedAt: e.modifiedAt,
           });
         }
       }

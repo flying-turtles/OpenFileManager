@@ -572,6 +572,11 @@ pub struct DiffFileEntry {
     pub location_id: Option<i64>,
     /// Absolute path on the source of truth. Set for copy entries only.
     pub source_path: Option<String>,
+    /// Source-of-truth mtime, carried so a copied file is indexed with the
+    /// same `modified_at` as its source. Project membership is derived from
+    /// `MIN(modified_at)` over a hash's rows, so a `NULL` here would drop the
+    /// file out of its project once the source-of-truth row is purged.
+    pub modified_at: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -621,6 +626,9 @@ pub struct DiffCopyItem {
     pub target_device_id: String,
     /// Relative to the target device's mount point.
     pub relative_path: String,
+    /// Source-of-truth mtime, indexed with the copied row. See
+    /// `DiffFileEntry::modified_at`.
+    pub modified_at: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

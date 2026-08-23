@@ -380,6 +380,12 @@ export interface DiffFileEntry {
   locationId: number | null;
   /** Absolute path on the source of truth. Set for copy entries only. */
   sourcePath: string | null;
+  /**
+   * Source-of-truth mtime, carried so a copied file is indexed with the same
+   * modifiedAt as its source. Project membership is MIN(modifiedAt) over a
+   * hash's rows, so a null would drop the file out of its project.
+   */
+  modifiedAt: string | null;
 }
 
 export interface DiffUnreadable {
@@ -419,6 +425,8 @@ export interface DiffCopyItem {
   sourcePath: string;
   targetDeviceId: string;
   relativePath: string;
+  /** Source-of-truth mtime, indexed with the copied row. */
+  modifiedAt: string | null;
 }
 
 export interface DiffCopyError {
