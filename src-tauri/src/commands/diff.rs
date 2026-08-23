@@ -230,3 +230,54 @@ pub async fn cancel_project_diff(state: State<'_, AppState>) -> Result<(), AppEr
     }
     Ok(())
 }
+
+#[tauri::command]
+pub async fn copy_diff_files(
+    state: State<'_, AppState>,
+    items: Vec<DiffCopyItem>,
+    on_event: Channel<DiffCopyEvent>,
+) -> Result<DiffCopyResult, AppError> {
+    let cancel = CancellationToken::new();
+    *state.diff_copy_cancel_token.lock().await = Some(cancel.clone());
+
+    let devices = db::get_all_devices(&state.pool).await?;
+    let mounts: HashMap<String, String> =
+        devices.into_iter().map(|d| (d.id, d.mount_point)).collect();
+
+    let result = diff::run_diff_copy(&state.pool, items, &mounts, &on_event, &cancel).await;
+
+    *state.diff_copy_cancel_token.lock().await = None;
+    Ok(result)
+}
+
+#[tauri::command]
+pub async fn cancel_diff_copy(state: State<'_, AppState>) -> Result<(), AppError> {
+    if let Some(token) = state.diff_copy_cancel_token.lock().await.as_ref() {
+        token.cancel();
+    }
+    Ok(())
+}
+
+/// Drops index rows for source-of-truth files confirmed gone from disk.
+///
+/// Unconditional on the delete selection: a row pointing at a file that is no
+/// longer there is wrong whether or not the user propagated the deletion.
+#[tauri::command]
+pub async fn purge_diff_locations(
+    state: State<'_, AppState>,
+    location_ids: Vec<i64>,
+) -> Result<u64, AppError> {
+    let mut purged: u64 = 0;
+    for id in location_ids {
+        if db::delete_file_location_no_cleanup(&state.pool, id)
+            .await
+            .is_ok()
+        {
+            purged += 1;
+        }
+    }
+    if purged > 0 {
+        let _ = db::cleanup_orphaned_files(&state.pool).await;
+    }
+    Ok(purged)
+}

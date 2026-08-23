@@ -230,6 +230,143 @@ pub async fn probe_locations(
     probed
 }
 
+use crate::db::{self, DbPool};
+use crate::importer::copy_file_cancellable;
+
+/// The mirrored destination for a copy: the source-of-truth relative path,
+/// rooted at the target device's mount.
+pub fn plan_copy_target(target_mount: &Path, relative_path: &str) -> PathBuf {
+    target_mount.join(relative_path)
+}
+
+/// Whether a copy may write to a target in this state.
+///
+/// Only an unambiguous absence permits a write. `Present` is an occupied
+/// target and `Unknown` means we could not tell — neither is permission.
+pub fn may_write_target(presence: Presence) -> bool {
+    presence == Presence::Gone
+}
+
+/// Copies each item to its target device, indexing what lands.
+///
+/// An occupied target is skipped, never overwritten — this feature only ever
+/// adds files a backup is missing.
+pub async fn run_diff_copy(
+    pool: &DbPool,
+    items: Vec<DiffCopyItem>,
+    mounts: &HashMap<String, String>,
+    channel: &Channel<DiffCopyEvent>,
+    cancel: &CancellationToken,
+) -> DiffCopyResult {
+    let mut result = DiffCopyResult {
+        copied: 0,
+        bytes_copied: 0,
+        skipped: Vec::new(),
+        failed: Vec::new(),
+    };
+
+    let total_files = items.len() as u64;
+    let total_bytes: i64 = items.iter().map(|i| i.file_size).sum();
+
+    for item in items {
+        if cancel.is_cancelled() {
+            let _ = channel.send(DiffCopyEvent::Cancelled);
+            return result;
+        }
+
+        let mount = match mounts.get(&item.target_device_id) {
+            Some(m) => m.clone(),
+            None => {
+                result.failed.push(DiffCopyError {
+                    file_name: item.file_name.clone(),
+                    target_device_id: item.target_device_id.clone(),
+                    error: "Target device has no known mount point".to_string(),
+                });
+                continue;
+            }
+        };
+
+        let dest = plan_copy_target(Path::new(&mount), &item.relative_path);
+
+        let _ = channel.send(DiffCopyEvent::Progress(DeviceCopyProgress {
+            device_id: item.target_device_id.clone(),
+            device_label: item.target_device_id.clone(),
+            bytes_copied: result.bytes_copied,
+            total_bytes,
+            files_copied: result.copied as u64,
+            total_files,
+            current_file: item.file_name.clone(),
+        }));
+
+        if !may_write_target(probe_path(dest.clone(), PROBE_TIMEOUT_SECS).await) {
+            result.skipped.push(DiffCopyError {
+                file_name: item.file_name.clone(),
+                target_device_id: item.target_device_id.clone(),
+                error: "A file already exists at the target path".to_string(),
+            });
+            continue;
+        }
+
+        if let Some(parent) = dest.parent() {
+            if let Err(e) = tokio::fs::create_dir_all(parent).await {
+                result.failed.push(DiffCopyError {
+                    file_name: item.file_name.clone(),
+                    target_device_id: item.target_device_id.clone(),
+                    error: format!("mkdir {}: {}", parent.display(), e),
+                });
+                continue;
+            }
+        }
+
+        match copy_file_cancellable(&item.source_path, &dest, cancel).await {
+            Ok(true) => {
+                result.copied += 1;
+                result.bytes_copied += item.file_size;
+
+                let extension = dest
+                    .extension()
+                    .unwrap_or_default()
+                    .to_string_lossy()
+                    .to_lowercase();
+                let _ = db::upsert_file(
+                    pool,
+                    &item.blake3_hash,
+                    item.file_size,
+                    &item.file_name,
+                    &extension,
+                )
+                .await;
+                let _ = db::upsert_location(
+                    pool,
+                    &item.blake3_hash,
+                    &item.target_device_id,
+                    &item.relative_path,
+                    &item.file_name,
+                    item.file_size,
+                    None,
+                    "diff-sync",
+                )
+                .await;
+            }
+            Ok(false) => {
+                let _ = channel.send(DiffCopyEvent::Cancelled);
+                return result;
+            }
+            Err(e) => {
+                let _ = tokio::fs::remove_file(&dest).await;
+                result.failed.push(DiffCopyError {
+                    file_name: item.file_name.clone(),
+                    target_device_id: item.target_device_id.clone(),
+                    error: e.to_string(),
+                });
+            }
+        }
+    }
+
+    let _ = channel.send(DiffCopyEvent::Complete(result.clone()));
+    result
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -251,6 +388,35 @@ mod tests {
             blake3_hash: hash.to_string(),
             presence,
         }
+    }
+
+    #[test]
+    fn copy_target_is_the_mirrored_relative_path_under_the_target_mount() {
+        let target = plan_copy_target(Path::new("/Volumes/Backup"), "2026-08-14/RAW/a.cr3");
+        assert_eq!(target, PathBuf::from("/Volumes/Backup/2026-08-14/RAW/a.cr3"));
+    }
+
+    #[test]
+    fn a_copy_may_only_write_an_unambiguously_absent_target() {
+        assert!(may_write_target(Presence::Gone));
+        // An occupied target must never be overwritten...
+        assert!(!may_write_target(Presence::Present));
+        // ...and "we could not tell" is not permission to write either.
+        assert!(!may_write_target(Presence::Unknown));
+    }
+
+    #[tokio::test]
+    async fn an_occupied_target_is_refused_and_left_untouched() {
+        let tmp = tempfile::tempdir().unwrap();
+        let dst_mount = tmp.path().join("backup");
+        std::fs::create_dir_all(dst_mount.join("2026-08-14")).unwrap();
+        let occupied = plan_copy_target(&dst_mount, "2026-08-14/a.cr3");
+        std::fs::write(&occupied, b"original").unwrap();
+
+        let presence = probe_path(occupied.clone(), 5).await;
+        assert_eq!(presence, Presence::Present);
+        assert!(!may_write_target(presence), "the copy must be refused");
+        assert_eq!(std::fs::read(&occupied).unwrap(), b"original");
     }
 
     #[test]
