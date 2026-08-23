@@ -35,6 +35,8 @@ pub struct AppState {
     pub similar_cancel_token: Arc<Mutex<Option<CancellationToken>>>,
     pub verify_cancel_token: Arc<Mutex<Option<CancellationToken>>>,
     pub transfer_resolved: Arc<Mutex<Option<(Vec<ResolvedTransferFile>, String, String, String)>>>,
+    pub diff_cancel_token: Arc<Mutex<Option<CancellationToken>>>,
+    pub diff_copy_cancel_token: Arc<Mutex<Option<CancellationToken>>>,
 }
 
 /// Filesystem stat with a deadline. A stalled network mount can hang stat()
