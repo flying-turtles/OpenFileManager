@@ -2,6 +2,7 @@ mod backup;
 mod commands;
 mod db;
 mod devices;
+mod diff;
 mod error;
 mod hasher;
 mod importer;
