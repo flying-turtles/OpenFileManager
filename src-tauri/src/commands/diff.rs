@@ -311,25 +311,22 @@ impl SotRecheck for MountedSot<'_> {
     }
 }
 
-/// Above this share of the source of truth's indexed project files reading as
-/// gone, the diff is refused rather than acted on.
-///
-/// This is a blunt backstop behind the identity check, for whatever that
-/// check misses. A cull rejects some of a shoot; a disk that is not really
-/// there loses all of it. 95% sits above any plausible cull and below the
-/// only thing that produces a near-total wipe.
-const MAX_GONE_FRACTION: f64 = 0.95;
-
-/// ...but only once there are enough files for the ratio to mean anything. A
-/// four-frame project fully rejected is 100% gone and perfectly legitimate.
+/// Below this many decided files, "all gone" says nothing — a four-frame
+/// project fully rejected is 100% gone and perfectly legitimate.
 const GONE_BACKSTOP_MIN_FILES: usize = 20;
 
 /// `true` when the source of truth's probe results look like a missing disk
 /// rather than a cull. Unreadable files are excluded: they are already kept
 /// out of both lists and say nothing either way.
+///
+/// Gated on zero presence, not a high fraction. Every failure mode this
+/// backstop exists to catch — unmounted volume, wrong disk — makes every
+/// sampled file read as gone, because the disk is not there; there is no
+/// slack to buy. A fractional threshold only produces false positives: a
+/// photographer culling 95%+ of a shoot is ordinary in wildlife and sports
+/// work, and even one present file proves the disk is mounted and readable.
 fn sot_looks_wrong(present: usize, gone: usize) -> bool {
-    let decided = present + gone;
-    decided >= GONE_BACKSTOP_MIN_FILES && (gone as f64) >= (decided as f64) * MAX_GONE_FRACTION
+    present == 0 && gone >= GONE_BACKSTOP_MIN_FILES
 }
 
 async fn compute_inner(
@@ -385,7 +382,7 @@ async fn compute_inner(
         return Err(AppError::General(format!(
             "Refusing the diff: {} of {} files are missing from {}. \
              That looks like the wrong disk rather than a cull — check it is \
-             mounted, rescan it, and try again",
+             mounted and reconnected, then try again",
             sot_gone,
             sot_present + sot_gone,
             sot.label
@@ -689,15 +686,22 @@ mod tests {
     }
 
     #[test]
-    fn the_backstop_refuses_a_near_total_disappearance() {
+    fn the_backstop_refuses_a_total_disappearance() {
         assert!(sot_looks_wrong(0, 3000));
-        assert!(sot_looks_wrong(50, 1000));
+        assert!(sot_looks_wrong(0, 20));
     }
 
     #[test]
     fn the_backstop_allows_an_ordinary_cull() {
         // 60% of a shoot rejected in Lightroom is a normal day.
         assert!(!sot_looks_wrong(400, 600));
+    }
+
+    #[test]
+    fn the_backstop_allows_a_heavy_but_not_total_cull() {
+        // 99.9% rejected in a wildlife/sports burst is ordinary, and even one
+        // present file proves the disk is mounted and readable.
+        assert!(!sot_looks_wrong(1, 999));
     }
 
     #[test]
