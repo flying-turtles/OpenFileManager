@@ -1111,7 +1111,7 @@ git commit -m "diff: compute a project diff against a source-of-truth device"
 
 **Interfaces:**
 - Consumes: `importer::copy_file_cancellable`, `db::upsert_file`, `db::upsert_location`, `db::delete_file_location_no_cleanup`, `db::cleanup_orphaned_files`; `DiffCopyItem`, `DiffCopyResult`, `DiffCopyError`, `DiffCopyEvent` from Task 1.
-- Produces: `diff::plan_copy_target(target_mount, relative_path) -> PathBuf`, `diff::run_diff_copy(pool, items, mounts, channel, cancel) -> DiffCopyResult`; Tauri commands `copy_diff_files(items, on_event) -> DiffCopyResult`, `cancel_diff_copy()`, `purge_diff_locations(location_ids) -> u64`.
+- Produces: `diff::plan_copy_target(target_mount, relative_path) -> PathBuf`, `diff::may_write_target(presence) -> bool`, `diff::run_diff_copy(pool, items, mounts, channel, cancel) -> DiffCopyResult`; Tauri commands `copy_diff_files(items, on_event) -> DiffCopyResult`, `cancel_diff_copy()`, `purge_diff_locations(location_ids) -> u64`.
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -1124,29 +1124,33 @@ Add to `mod tests` in `src-tauri/src/diff.rs`:
         assert_eq!(target, PathBuf::from("/Volumes/Backup/2026-08-14/RAW/a.cr3"));
     }
 
+    #[test]
+    fn a_copy_may_only_write_an_unambiguously_absent_target() {
+        assert!(may_write_target(Presence::Gone));
+        // An occupied target must never be overwritten...
+        assert!(!may_write_target(Presence::Present));
+        // ...and "we could not tell" is not permission to write either.
+        assert!(!may_write_target(Presence::Unknown));
+    }
+
     #[tokio::test]
-    async fn copy_skips_an_occupied_target_and_leaves_it_untouched() {
+    async fn an_occupied_target_is_refused_and_left_untouched() {
         let tmp = tempfile::tempdir().unwrap();
-        let src_mount = tmp.path().join("sot");
         let dst_mount = tmp.path().join("backup");
-        std::fs::create_dir_all(src_mount.join("2026-08-14")).unwrap();
         std::fs::create_dir_all(dst_mount.join("2026-08-14")).unwrap();
-        std::fs::write(src_mount.join("2026-08-14/a.cr3"), b"new").unwrap();
         let occupied = plan_copy_target(&dst_mount, "2026-08-14/a.cr3");
         std::fs::write(&occupied, b"original").unwrap();
 
-        assert_eq!(
-            probe_path(occupied.clone(), 5).await,
-            Presence::Present,
-            "precondition: the target is occupied"
-        );
+        let presence = probe_path(occupied.clone(), 5).await;
+        assert_eq!(presence, Presence::Present);
+        assert!(!may_write_target(presence), "the copy must be refused");
         assert_eq!(std::fs::read(&occupied).unwrap(), b"original");
     }
 ```
 
 - [ ] **Step 2: Run the tests to verify they fail**
 
-Run: `cd src-tauri && cargo test diff::tests::copy`
+Run: `cd src-tauri && cargo test diff::`
 Expected: compile error — `cannot find function plan_copy_target`.
 
 - [ ] **Step 3: Write the copy engine**
@@ -1161,6 +1165,14 @@ use crate::importer::copy_file_cancellable;
 /// rooted at the target device's mount.
 pub fn plan_copy_target(target_mount: &Path, relative_path: &str) -> PathBuf {
     target_mount.join(relative_path)
+}
+
+/// Whether a copy may write to a target in this state.
+///
+/// Only an unambiguous absence permits a write. `Present` is an occupied
+/// target and `Unknown` means we could not tell — neither is permission.
+pub fn may_write_target(presence: Presence) -> bool {
+    presence == Presence::Gone
 }
 
 /// Copies each item to its target device, indexing what lands.
@@ -1214,9 +1226,7 @@ pub async fn run_diff_copy(
             current_file: item.file_name.clone(),
         }));
 
-        // Anything but a clean "not there" means we must not write: Present is
-        // an occupied target, Unknown means we cannot tell.
-        if probe_path(dest.clone(), PROBE_TIMEOUT_SECS).await != Presence::Gone {
+        if !may_write_target(probe_path(dest.clone(), PROBE_TIMEOUT_SECS).await) {
             result.skipped.push(DiffCopyError {
                 file_name: item.file_name.clone(),
                 target_device_id: item.target_device_id.clone(),
@@ -1289,7 +1299,7 @@ pub async fn run_diff_copy(
 - [ ] **Step 4: Run the tests to verify they pass**
 
 Run: `cd src-tauri && cargo test diff::`
-Expected: 13 passed.
+Expected: 14 passed.
 
 - [ ] **Step 5: Add the commands**
 
