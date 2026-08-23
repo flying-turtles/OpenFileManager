@@ -12,9 +12,10 @@ import { Projects } from "./pages/Projects";
 import { Transfer } from "./pages/Transfer";
 import { Backup } from "./pages/Backup";
 import { Similar } from "./pages/Similar";
+import { ProjectDiff } from "./pages/ProjectDiff";
 import "./App.css";
 
-type Page = "dashboard" | "devices" | "scanner" | "files" | "import" | "move" | "transfer" | "projects" | "backup" | "similar";
+type Page = "dashboard" | "devices" | "scanner" | "files" | "import" | "move" | "transfer" | "projects" | "backup" | "similar" | "projectDiff";
 
 function App() {
   const [page, setPage] = useState<Page>("dashboard");
@@ -23,6 +24,11 @@ function App() {
   const [openProject, setOpenProject] = useState<number | undefined>();
   const [filesFilter, setFilesFilter] = useState<FilesFilter>("all");
   const [connectPrompts, setConnectPrompts] = useState<StorageDevice[]>([]);
+  const [diffTarget, setDiffTarget] = useState<{
+    projectId: number;
+    projectTitle: string;
+    sotDeviceId: string;
+  } | null>(null);
 
   // Offer a scan when a drive that is already in the index reconnects
   useEffect(() => {
@@ -66,6 +72,14 @@ function App() {
     setTransferProject({ id, title });
     setPage("transfer");
   }, []);
+
+  const handleShowDiff = useCallback(
+    (projectId: number, projectTitle: string, sotDeviceId: string) => {
+      setDiffTarget({ projectId, projectTitle, sotDeviceId });
+      setPage("projectDiff");
+    },
+    []
+  );
 
   const handleOpenFiles = useCallback((filter: FilesFilter) => {
     setFilesFilter(filter);
@@ -164,7 +178,11 @@ function App() {
           <Move />
         </div>
         {page === "projects" && (
-          <Projects onTransferProject={handleTransferProject} initialProjectId={openProject} />
+          <Projects
+            onTransferProject={handleTransferProject}
+            onShowDiff={handleShowDiff}
+            initialProjectId={openProject}
+          />
         )}
         <div className={page === "backup" ? "contents-display" : "hidden-display"}>
           <Backup />
@@ -172,6 +190,18 @@ function App() {
         <div className={page === "similar" ? "contents-display" : "hidden-display"}>
           <Similar />
         </div>
+        {page === "projectDiff" && diffTarget && (
+          <ProjectDiff
+            projectId={diffTarget.projectId}
+            projectTitle={diffTarget.projectTitle}
+            sotDeviceId={diffTarget.sotDeviceId}
+            onBack={() => {
+              setOpenProject(diffTarget.projectId);
+              setDiffTarget(null);
+              setPage("projects");
+            }}
+          />
+        )}
       </main>
     </div>
   );
