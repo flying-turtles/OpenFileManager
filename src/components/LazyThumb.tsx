@@ -6,6 +6,8 @@ interface Props {
   locations: FileLocation[];
   fileName: string;
   preferredDeviceId?: string;
+  /** Forwarded to the preview: makes the thumbnail open the larger view. */
+  onClick?: () => void;
 }
 
 /**
@@ -15,7 +17,7 @@ interface Props {
  * thumbnail generation for RAW and video. Mounting them all makes the page
  * unusable, so the work waits until the user actually scrolls there.
  */
-export function LazyThumb({ locations, fileName, preferredDeviceId }: Props) {
+export function LazyThumb({ locations, fileName, preferredDeviceId, onClick }: Props) {
   const ref = useRef<HTMLDivElement>(null);
   const [visible, setVisible] = useState(false);
 
@@ -46,6 +48,7 @@ export function LazyThumb({ locations, fileName, preferredDeviceId }: Props) {
           locations={locations}
           fileName={fileName}
           preferredDeviceId={preferredDeviceId}
+          onClick={onClick}
         />
       )}
     </div>

@@ -4,6 +4,7 @@ import type { FileLocation, FileSafety, BulkDeleteEvent, BulkDeleteResult } from
 import { resolveFilePath, openFile, revealInFinder } from "../api/commands";
 import { SafetyBadge } from "./SafetyBadge";
 import { FilePreview } from "./FilePreview";
+import { PreviewLightbox, type LightboxItem } from "./PreviewLightbox";
 import { useFocusTrap } from "../hooks/useFocusTrap";
 import { formatBytes } from "../utils/format";
 import "./FileTable.css";
@@ -191,6 +192,7 @@ export function FileTable({ files, totalCount, deviceNames, connectedDeviceIds, 
   const [confirmDelete, setConfirmDelete] = useState<{ id: number; path: string } | null>(null);
   const [confirmDeleteAll, setConfirmDeleteAll] = useState<{ fileName: string; locations: FileLocation[]; offline: FileLocation[] } | null>(null);
   const [deleting, setDeleting] = useState(false);
+  const [lightbox, setLightbox] = useState<LightboxItem[] | null>(null);
   const parentRef = useRef<HTMLDivElement>(null);
 
   const handleOpenFile = useCallback(async (loc: FileLocation) => {
@@ -318,6 +320,15 @@ export function FileTable({ files, totalCount, deviceNames, connectedDeviceIds, 
                         locations={row.safety.locations}
                         fileName={row.file.fileName}
                         preferredDeviceId={selectedDeviceId}
+                        onClick={() =>
+                          setLightbox([
+                            {
+                              locations: row.safety.locations,
+                              fileName: row.file.fileName,
+                              preferredDeviceId: selectedDeviceId,
+                            },
+                          ])
+                        }
                       />
                       <div className="safety-detail">
                         <SafetyBadge
@@ -469,6 +480,15 @@ export function FileTable({ files, totalCount, deviceNames, connectedDeviceIds, 
               }
             }
           }}
+        />
+      )}
+
+      {lightbox && (
+        <PreviewLightbox
+          items={lightbox}
+          index={0}
+          onIndexChange={() => {}}
+          onClose={() => setLightbox(null)}
         />
       )}
     </div>

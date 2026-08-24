@@ -1,7 +1,8 @@
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { useFocusTrap } from "../hooks/useFocusTrap";
 import { PermanentToggle } from "./FileTable";
 import { LazyThumb } from "./LazyThumb";
+import { PreviewLightbox, type LightboxItem } from "./PreviewLightbox";
 import { formatBytes } from "../utils/format";
 import type { FileLocation } from "../types";
 import type { ResolveResult } from "../hooks/useProjectDiff";
@@ -42,15 +43,29 @@ export function DiffResolveModal({
 }: Props) {
   const trapRef = useFocusTrap<HTMLDivElement>();
   const [permanent, setPermanent] = useState(false);
+  const [lightboxIndex, setLightboxIndex] = useState<number | null>(null);
   const [confirmText, setConfirmText] = useState("");
 
   const deleteBytes = deleteItems.reduce((sum, i) => sum + i.fileSize, 0);
+  // The arrows walk the whole selection, so the user can review everything
+  // that is about to go without closing the dialog between files.
+  const lightboxItems = useMemo<LightboxItem[]>(
+    () =>
+      deleteItems.map((item) => ({
+        locations: [item.location],
+        fileName: item.fileName,
+        preferredDeviceId: item.location.deviceId,
+        caption: item.deviceLabel,
+      })),
+    [deleteItems]
+  );
   // A move to the Trash is recoverable and needs no extra friction; a
   // permanent delete follows SourceCleanupModal and asks for the label.
   const confirmed = !permanent || confirmText === sotLabel;
   const canResolve = confirmed && (deleteItems.length > 0 || copyCount > 0);
 
   return (
+    <>
     <div
       className="modal-overlay"
       onClick={() => !busy && !result && onClose()}
@@ -140,12 +155,13 @@ export function DiffResolveModal({
               <>
                 <p className="bulk-delete-warning">About to be deleted:</p>
                 <div className="diff-resolve-grid">
-                  {deleteItems.map((item) => (
+                  {deleteItems.map((item, i) => (
                     <div key={item.key} className="diff-resolve-tile">
                       <LazyThumb
                         locations={[item.location]}
                         fileName={item.fileName}
                         preferredDeviceId={item.location.deviceId}
+                        onClick={() => setLightboxIndex(i)}
                       />
                       <span className="diff-resolve-tile-name" title={item.fileName}>
                         {item.fileName}
@@ -187,5 +203,18 @@ export function DiffResolveModal({
         )}
       </div>
     </div>
+
+    {/* Sibling of the overlay, not a child: nested inside it, the lightbox's
+        own clicks and Escape would bubble to the overlay's handlers and close
+        the confirmation dialog underneath. */}
+    {lightboxIndex !== null && (
+      <PreviewLightbox
+        items={lightboxItems}
+        index={lightboxIndex}
+        onIndexChange={setLightboxIndex}
+        onClose={() => setLightboxIndex(null)}
+      />
+    )}
+    </>
   );
 }

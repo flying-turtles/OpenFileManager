@@ -7,6 +7,7 @@ import { useFocusTrap } from "../hooks/useFocusTrap";
 import { resolveFilePath, getThumbnail, openFile, revealInFinder } from "../api/commands";
 import type { SimilarFile, SimilarGroup, BulkDeleteEvent, BulkDeleteResult } from "../types";
 import { PermanentToggle } from "../components/FileTable";
+import { PreviewLightbox, type LightboxItem } from "../components/PreviewLightbox";
 import { formatBytes } from "../utils/format";
 import "./Similar.css";
 
@@ -207,6 +208,9 @@ export function Similar() {
   const [deviceFilter, setDeviceFilter] = useState("");
   const [folder, setFolder] = useState("");
   // keepers per group: blake3 hashes of the files to keep (multi-select)
+  const [lightbox, setLightbox] = useState<{ items: LightboxItem[]; index: number } | null>(
+    null
+  );
   const [keepers, setKeepers] = useState<Record<number, string[]>>({});
   const [deleteTarget, setDeleteTarget] = useState<number | null>(null);
   // Delete every connected copy of one specific file
@@ -278,6 +282,17 @@ export function Similar() {
     setFolder("");
     setKeepers({});
     if (phase === "ready") loadGroups(maxDistance, deviceFilter || undefined);
+  };
+
+  // The arrows walk the whole group, which is the set being compared.
+  const openGroupLightbox = (group: SimilarGroup, file: SimilarFile) => {
+    const items: LightboxItem[] = group.files.map((f) => ({
+      locations: f.locations,
+      fileName: f.representativeName,
+      caption: formatBytes(f.fileSize),
+    }));
+    const index = group.files.findIndex((f) => f.blake3Hash === file.blake3Hash);
+    setLightbox({ items, index: index >= 0 ? index : 0 });
   };
 
   // Open the file in its default app (Preview for images) — first
@@ -465,14 +480,27 @@ export function Similar() {
                       </span>
                       <div className="similar-card-actions">
                         <button
+                          title="Show a larger preview"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            openGroupLightbox(group, file);
+                          }}
+                        >
+                          Enlarge
+                        </button>
+                        <button
                           disabled={offline}
-                          title={offline ? "No copies on connected drives" : "Open in Preview"}
+                          title={
+                            offline
+                              ? "No copies on connected drives"
+                              : "Open in the default app"
+                          }
                           onClick={(e) => {
                             e.stopPropagation();
                             handlePreview(file);
                           }}
                         >
-                          Preview
+                          Open
                         </button>
                         <button
                           disabled={offline}
@@ -532,6 +560,15 @@ export function Similar() {
             setDeleteFileTarget(null);
             setKeepers({});
           }}
+        />
+      )}
+
+      {lightbox && (
+        <PreviewLightbox
+          items={lightbox.items}
+          index={lightbox.index}
+          onIndexChange={(index) => setLightbox((prev) => (prev ? { ...prev, index } : prev))}
+          onClose={() => setLightbox(null)}
         />
       )}
     </div>

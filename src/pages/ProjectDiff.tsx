@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useCallback, useMemo, useState } from "react";
 import {
   useProjectDiff,
   buildTree,
@@ -8,6 +8,7 @@ import {
   type TreeNode,
 } from "../hooks/useProjectDiff";
 import { LazyThumb } from "../components/LazyThumb";
+import { PreviewLightbox, type LightboxItem } from "../components/PreviewLightbox";
 import { DiffResolveModal, type DeletePreviewItem } from "../components/DiffResolveModal";
 import { formatBytes } from "../utils/format";
 import type { DiffDeviceResult, DiffFileEntry, FileLocation } from "../types";
@@ -76,6 +77,7 @@ function Folder({
   previewDeviceId,
   depth,
   sectionExpanded,
+  onOpenPreview,
 }: {
   deviceId: string;
   node: TreeNode;
@@ -85,6 +87,7 @@ function Folder({
   previewDeviceId: string;
   depth: number;
   sectionExpanded: boolean;
+  onOpenPreview: (relativePath: string) => void;
 }) {
   // depth 0 is the tree root: it has no header (node.path === "" below
   // skips it) and therefore no toggle, so it must always let its children
@@ -121,6 +124,7 @@ function Folder({
               previewDeviceId={previewDeviceId}
               depth={depth + 1}
               sectionExpanded={sectionExpanded}
+              onOpenPreview={onOpenPreview}
             />
           ))}
           {node.files.map((file) => {
@@ -136,6 +140,7 @@ function Folder({
                   locations={[previewLocation(previewDeviceId, file)]}
                   fileName={file.fileName}
                   preferredDeviceId={previewDeviceId}
+                  onClick={() => onOpenPreview(file.relativePath)}
                 />
                 <span className="diff-file-name">{file.fileName}</span>
                 <span className="diff-file-size">{formatBytes(file.fileSize)}</span>
@@ -154,15 +159,40 @@ function DeviceSection({
   selected,
   toggleKeys,
   sotDeviceId,
+  onOpenPreview,
 }: {
   device: DiffDeviceResult;
   section: Section;
   selected: Set<string>;
   toggleKeys: (section: Section, keys: string[], next: boolean) => void;
   sotDeviceId: string;
+  onOpenPreview: (items: LightboxItem[], index: number) => void;
 }) {
   const entries = section === "delete" ? device.toDelete : device.toCopy;
   const tree = useMemo(() => buildTree(entries), [entries]);
+  // Deletions preview from the backup that still holds the file; copies
+  // preview from the source of truth, the only place they exist. Hoisted
+  // above the early returns so the memo below can depend on it.
+  const previewDeviceId = section === "delete" ? device.deviceId : sotDeviceId;
+  // The whole section is the set the lightbox arrows walk, so a reject run
+  // can be stepped through without closing and reopening.
+  const lightboxItems = useMemo<LightboxItem[]>(
+    () =>
+      entries.map((e) => ({
+        locations: [previewLocation(previewDeviceId, e)],
+        fileName: e.fileName,
+        preferredDeviceId: previewDeviceId,
+        caption: device.deviceLabel,
+      })),
+    [entries, previewDeviceId, device.deviceLabel]
+  );
+  const openAt = useCallback(
+    (relativePath: string) => {
+      const index = entries.findIndex((e) => e.relativePath === relativePath);
+      if (index >= 0) onOpenPreview(lightboxItems, index);
+    },
+    [entries, lightboxItems, onOpenPreview]
+  );
   // Hoisted above the early returns below: hooks can't be called
   // conditionally, and this component returns early for skipped or
   // empty devices.
@@ -178,9 +208,6 @@ function DeviceSection({
   }
   if (entries.length === 0) return null;
 
-  // Deletions preview from the backup that still holds the file; copies
-  // preview from the source of truth, the only place they exist.
-  const previewDeviceId = section === "delete" ? device.deviceId : sotDeviceId;
   const bytes = section === "delete" ? device.deleteBytes : device.copyBytes;
   const sectionExpanded = entries.length <= AUTO_EXPAND_FILE_THRESHOLD;
 
@@ -197,6 +224,7 @@ function DeviceSection({
         </span>
       </div>
       <Folder
+        onOpenPreview={openAt}
         deviceId={device.deviceId}
         node={tree}
         section={section}
@@ -231,6 +259,13 @@ export function ProjectDiff({ projectId, projectTitle, sotDeviceId, onBack }: Pr
 
   const [section, setSection] = useState<Section>("delete");
   const [resolving, setResolving] = useState(false);
+  const [lightbox, setLightbox] = useState<{ items: LightboxItem[]; index: number } | null>(
+    null
+  );
+  const openPreview = useCallback(
+    (items: LightboxItem[], index: number) => setLightbox({ items, index }),
+    []
+  );
   const selected = section === "delete" ? selectedDelete : selectedCopy;
 
   const deletePreviewItems = useMemo<DeletePreviewItem[]>(() => {
@@ -366,6 +401,7 @@ export function ProjectDiff({ projectId, projectTitle, sotDeviceId, onBack }: Pr
           <div className="diff-listing">
             {diff.devices.map((device) => (
               <DeviceSection
+                onOpenPreview={openPreview}
                 key={`${section}-${device.deviceId}`}
                 device={device}
                 section={section}
@@ -376,6 +412,15 @@ export function ProjectDiff({ projectId, projectTitle, sotDeviceId, onBack }: Pr
             ))}
           </div>
         </>
+      )}
+
+      {lightbox && (
+        <PreviewLightbox
+          items={lightbox.items}
+          index={lightbox.index}
+          onIndexChange={(index) => setLightbox((prev) => (prev ? { ...prev, index } : prev))}
+          onClose={() => setLightbox(null)}
+        />
       )}
 
       {resolving && diff && (
