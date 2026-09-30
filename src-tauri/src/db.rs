@@ -125,6 +125,47 @@ pub async fn delete_device(pool: &DbPool, device_id: &str) -> Result<(), AppErro
     Ok(())
 }
 
+/// Re-point a device at a new mount path. Resets total_bytes to 0 —
+/// totals are unreliable for manually-pointed paths (same as add_location).
+pub async fn update_device_mount_point(
+    pool: &DbPool,
+    device_id: &str,
+    mount_point: &str,
+    available_bytes: i64,
+) -> Result<(), AppError> {
+    sqlx::query(
+        "UPDATE storage_devices
+         SET mount_point = ?, total_bytes = 0, available_bytes = ?, last_seen = datetime('now')
+         WHERE id = ?",
+    )
+    .bind(mount_point)
+    .bind(available_bytes)
+    .bind(device_id)
+    .execute(pool)
+    .await?;
+    Ok(())
+}
+
+/// Samples files at random rather than by insertion order: the earliest-
+/// indexed files are also the ones most likely to have been culled or
+/// reorganised since, so a deterministic `ORDER BY id` would bias the
+/// identity check toward files whose absence says nothing about whether the
+/// volume is mounted.
+pub async fn get_device_file_sample(
+    pool: &DbPool,
+    device_id: &str,
+    limit: i64,
+) -> Result<Vec<FileLocation>, AppError> {
+    let rows = sqlx::query_as::<_, FileLocation>(
+        "SELECT * FROM file_locations WHERE device_id = ? ORDER BY RANDOM() LIMIT ?",
+    )
+    .bind(device_id)
+    .bind(limit)
+    .fetch_all(pool)
+    .await?;
+    Ok(rows)
+}
+
 // --- File queries ---
 
 pub async fn upsert_file(pool: &DbPool, hash: &str, size: i64, name: &str, ext: &str) -> Result<(), AppError> {
@@ -175,22 +216,68 @@ pub async fn upsert_location(
     Ok(())
 }
 
+// --- Scan-scope path matching ---
+//
+// A scan targets a device (prefix "") or a folder on it. Matching the folder
+// with a bare `LIKE 'prefix%'` also catches siblings — scanning `Foo` would
+// pull in `Foobar` — so the predicate matches the path itself or anything
+// strictly beneath it.
+
+/// LIKE pattern matching everything strictly beneath `prefix`.
+pub(crate) fn scope_like(prefix: &str) -> String {
+    // Backslash first — it is the escape character itself.
+    let escaped = prefix
+        .replace('\\', "\\\\")
+        .replace('%', "\\%")
+        .replace('_', "\\_");
+    format!("{}/%", escaped)
+}
+
+/// `WHERE` fragment for rows under `prefix` on a device, with every column
+/// qualified by `alias` (pass `""` for an unaliased single-table query). An
+/// empty prefix means the whole device and needs no path predicate at all.
+/// Bind with [`bind_scope!`], which supplies the parameters in order.
+pub(crate) fn scope_clause(alias: &str, column: &str, prefix: &str) -> String {
+    let q = if alias.is_empty() {
+        String::new()
+    } else {
+        format!("{}.", alias)
+    };
+    if prefix.is_empty() {
+        format!("{q}device_id = ?", q = q)
+    } else {
+        format!(
+            "{q}device_id = ? AND ({q}{c} = ? OR {q}{c} LIKE ? ESCAPE '\\')",
+            q = q,
+            c = column
+        )
+    }
+}
+
+/// Binds the parameters `scope_clause` expects, in order.
+macro_rules! bind_scope {
+    ($query:expr, $device_id:expr, $prefix:expr) => {{
+        let q = $query.bind($device_id);
+        if $prefix.is_empty() {
+            q
+        } else {
+            q.bind($prefix).bind(crate::db::scope_like($prefix))
+        }
+    }};
+}
+
 pub async fn get_locations_by_prefix(
     pool: &DbPool,
     device_id: &str,
     prefix: &str,
 ) -> Result<HashMap<String, FileLocation>, AppError> {
-    let prefix_pattern = format!(
-        "{}%",
-        prefix.replace('%', "\\%").replace('_', "\\_")
+    let sql = format!(
+        "SELECT * FROM file_locations WHERE {}",
+        scope_clause("", "file_path", prefix)
     );
-    let rows = sqlx::query_as::<_, FileLocation>(
-        "SELECT * FROM file_locations WHERE device_id = ? AND file_path LIKE ? ESCAPE '\\'"
-    )
-    .bind(device_id)
-    .bind(&prefix_pattern)
-    .fetch_all(pool)
-    .await?;
+    let rows = bind_scope!(sqlx::query_as::<_, FileLocation>(&sql), device_id, prefix)
+        .fetch_all(pool)
+        .await?;
     let mut map = HashMap::with_capacity(rows.len());
     for loc in rows {
         map.insert(loc.file_path.clone(), loc);
@@ -617,12 +704,16 @@ pub async fn delete_file_location(pool: &DbPool, location_id: i64) -> Result<(),
     Ok(())
 }
 
-pub async fn delete_file_location_no_cleanup(pool: &DbPool, location_id: i64) -> Result<(), AppError> {
-    sqlx::query("DELETE FROM file_locations WHERE id = ?")
+/// Deletes one location row and reports how many rows were actually removed
+/// (0 or 1) — the query itself always succeeds even when the id no longer
+/// exists, so callers that need to know whether something really happened
+/// must check `rows_affected`, not just that this returned `Ok`.
+pub async fn delete_file_location_no_cleanup(pool: &DbPool, location_id: i64) -> Result<u64, AppError> {
+    let res = sqlx::query("DELETE FROM file_locations WHERE id = ?")
         .bind(location_id)
         .execute(pool)
         .await?;
-    Ok(())
+    Ok(res.rows_affected())
 }
 
 pub async fn get_waste_candidates(pool: &DbPool, threshold: i64) -> Result<Vec<WasteCandidate>, AppError> {
@@ -649,21 +740,14 @@ pub async fn remove_stale_locations(
     seen_paths: &[String],
 ) -> Result<u64, AppError> {
     // Delete locations under the scanned prefix that weren't seen
-    // Use a prefix match with LIKE (escape % and _ in prefix)
-    let prefix_pattern = format!(
-        "{}%",
-        path_prefix.replace('%', "\\%").replace('_', "\\_")
-    );
+    let scope = scope_clause("", "file_path", path_prefix);
 
     if seen_paths.is_empty() {
         // Nothing seen = everything under prefix is gone
-        let res = sqlx::query(
-            "DELETE FROM file_locations WHERE device_id = ? AND file_path LIKE ? ESCAPE '\\'"
-        )
-        .bind(device_id)
-        .bind(&prefix_pattern)
-        .execute(pool)
-        .await?;
+        let sql = format!("DELETE FROM file_locations WHERE {}", scope);
+        let res = bind_scope!(sqlx::query(&sql), device_id, path_prefix)
+            .execute(pool)
+            .await?;
         return Ok(res.rows_affected());
     }
 
@@ -671,13 +755,10 @@ pub async fn remove_stale_locations(
     // For simplicity, batch delete with NOT IN (chunked to avoid SQLite limits)
     let mut total_deleted: u64 = 0;
     // Get all existing locations under prefix
-    let existing = sqlx::query_as::<_, (i64, String)>(
-        "SELECT id, file_path FROM file_locations WHERE device_id = ? AND file_path LIKE ? ESCAPE '\\'"
-    )
-    .bind(device_id)
-    .bind(&prefix_pattern)
-    .fetch_all(pool)
-    .await?;
+    let sql = format!("SELECT id, file_path FROM file_locations WHERE {}", scope);
+    let existing = bind_scope!(sqlx::query_as::<_, (i64, String)>(&sql), device_id, path_prefix)
+        .fetch_all(pool)
+        .await?;
 
     let seen_set: std::collections::HashSet<&str> = seen_paths.iter().map(|s| s.as_str()).collect();
     let stale_ids: Vec<i64> = existing
@@ -698,6 +779,19 @@ pub async fn remove_stale_locations(
     }
 
     Ok(total_deleted)
+}
+
+pub async fn delete_location_by_device_and_path(
+    pool: &DbPool,
+    device_id: &str,
+    file_path: &str,
+) -> Result<(), AppError> {
+    sqlx::query("DELETE FROM file_locations WHERE device_id = ? AND file_path = ?")
+        .bind(device_id)
+        .bind(file_path)
+        .execute(pool)
+        .await?;
+    Ok(())
 }
 
 pub async fn cleanup_orphaned_files(pool: &DbPool) -> Result<u64, AppError> {
@@ -730,6 +824,244 @@ pub async fn get_locations_for_hashes(
         }
     }
     Ok(result)
+}
+
+// --- Scan summary queries ---
+//
+// All of these describe the *scanned location* as the index currently knows
+// it, not what a particular scan run touched. A scan skips unchanged
+// directories, so its counters would badly understate a re-scan.
+
+/// Total file count, total bytes, and the modified-at range of everything
+/// indexed under the scanned location.
+pub async fn get_scan_location_stats(
+    pool: &DbPool,
+    device_id: &str,
+    prefix: &str,
+) -> Result<(i64, i64, Option<String>, Option<String>), AppError> {
+    let sql = format!(
+        "SELECT COUNT(*), COALESCE(SUM(file_size), 0), MIN(modified_at), MAX(modified_at)
+         FROM file_locations WHERE {}",
+        scope_clause("", "file_path", prefix)
+    );
+    let row = bind_scope!(
+        sqlx::query_as::<_, (i64, i64, Option<String>, Option<String>)>(&sql),
+        device_id,
+        prefix
+    )
+    .fetch_one(pool)
+    .await?;
+    Ok(row)
+}
+
+/// The CTEs shared by the project-breakdown queries: the distinct hashes in
+/// the scanned location, and the earliest modified-at of each across *all*
+/// devices. Using the global minimum matches how the Projects page assigns
+/// files, so both views agree on membership.
+fn scan_project_cte(prefix: &str) -> String {
+    format!(
+        "WITH scoped AS (
+             SELECT DISTINCT blake3_hash FROM file_locations WHERE {}
+         ),
+         first_mod AS (
+             SELECT fl.blake3_hash AS h, MIN(fl.modified_at) AS m
+             FROM file_locations fl
+             WHERE fl.blake3_hash IN (SELECT blake3_hash FROM scoped)
+             GROUP BY fl.blake3_hash
+         )",
+        scope_clause("", "file_path", prefix)
+    )
+}
+
+/// Per-project file counts and sizes for the scanned location, plus the
+/// number of files that fall outside every project's date range.
+pub async fn get_scan_project_breakdown(
+    pool: &DbPool,
+    device_id: &str,
+    prefix: &str,
+) -> Result<(Vec<ScanProjectSummary>, i64), AppError> {
+    let cte = scan_project_cte(prefix);
+
+    let sql = format!(
+        "{} SELECT p.id, p.title, COUNT(*), COALESCE(SUM(f.file_size), 0)
+         FROM projects p
+         JOIN first_mod fm ON fm.m >= p.start_date AND fm.m < date(p.end_date, '+1 day')
+         JOIN files f ON f.blake3_hash = fm.h
+         GROUP BY p.id, p.title
+         ORDER BY p.start_date DESC",
+        cte
+    );
+    let rows = bind_scope!(
+        sqlx::query_as::<_, (i64, String, i64, i64)>(&sql),
+        device_id,
+        prefix
+    )
+    .fetch_all(pool)
+    .await?;
+
+    let projects = rows
+        .into_iter()
+        .map(|(id, title, file_count, total_bytes)| ScanProjectSummary {
+            id,
+            title,
+            file_count,
+            total_bytes,
+        })
+        .collect();
+
+    // Files with a NULL modified_at can never match a range, so they land
+    // here — which is the honest answer for "not in any project".
+    let sql = format!(
+        "{} SELECT COUNT(*) FROM first_mod fm
+         WHERE NOT EXISTS (
+             SELECT 1 FROM projects p
+             WHERE fm.m >= p.start_date AND fm.m < date(p.end_date, '+1 day')
+         )",
+        cte
+    );
+    let (unassigned,): (i64,) = bind_scope!(sqlx::query_as(&sql), device_id, prefix)
+        .fetch_one(pool)
+        .await?;
+
+    Ok((projects, unassigned))
+}
+
+/// Groups the scanned files by *which* other devices hold a copy, so the
+/// summary can say "200 of 500 files are also on A and B, 100 on C".
+///
+/// Copies are matched on hash **and** size for the same reason the delete
+/// path does — see [`redundant_predicate`].
+pub async fn get_scan_device_groups(
+    pool: &DbPool,
+    device_id: &str,
+    prefix: &str,
+) -> Result<Vec<ScanDeviceGroup>, AppError> {
+    let sql = format!(
+        "WITH scoped AS (
+             SELECT fl.blake3_hash AS h, fl.file_size AS sz, fl.device_id AS did
+             FROM file_locations fl WHERE {}
+         )
+         SELECT (SELECT COALESCE(GROUP_CONCAT(dev, ','), '') FROM (
+                     SELECT DISTINCT o.device_id AS dev
+                     FROM file_locations o
+                     WHERE o.blake3_hash = s.h
+                       AND o.device_id <> s.did
+                       AND o.file_size = s.sz
+                     ORDER BY o.device_id
+                 )) AS devices,
+                COUNT(*), COALESCE(SUM(s.sz), 0)
+         FROM scoped s
+         GROUP BY devices",
+        scope_clause("fl", "file_path", prefix)
+    );
+    let rows = bind_scope!(
+        sqlx::query_as::<_, (String, i64, i64)>(&sql),
+        device_id,
+        prefix
+    )
+    .fetch_all(pool)
+    .await?;
+
+    // GROUP_CONCAT's ordering is not contractual, so two rows could describe
+    // the same device set in different orders. Canonicalise and merge here
+    // rather than trusting SQLite to have grouped them together.
+    let mut merged: HashMap<Vec<String>, (i64, i64)> = HashMap::new();
+    for (devices, file_count, total_bytes) in rows {
+        let mut ids: Vec<String> = devices
+            .split(',')
+            .filter(|s| !s.is_empty())
+            .map(|s| s.to_string())
+            .collect();
+        ids.sort();
+        ids.dedup();
+        let entry = merged.entry(ids).or_insert((0, 0));
+        entry.0 += file_count;
+        entry.1 += total_bytes;
+    }
+
+    let mut groups: Vec<ScanDeviceGroup> = merged
+        .into_iter()
+        .map(|(device_ids, (file_count, total_bytes))| ScanDeviceGroup {
+            device_ids,
+            file_count,
+            total_bytes,
+        })
+        .collect();
+    groups.sort_by(|a, b| b.file_count.cmp(&a.file_count));
+    Ok(groups)
+}
+
+/// `WHERE` fragment selecting scoped locations whose content also lives on at
+/// least two *other* devices.
+///
+/// Two guards make this trustworthy enough to delete on:
+///
+/// * `DISTINCT o.device_id` with `o.device_id <> fl.device_id` — two copies
+///   elsewhere on the scanned drive are not a backup, one dead disk takes
+///   them all. Only genuinely separate devices count.
+/// * `o.file_size = fl.file_size` — `blake3_hash` covers only the first 4 MB
+///   (see `hasher::hash_file_partial_sync`), so files that merely share a
+///   header collide. Requiring an exact size match rules that out.
+fn redundant_predicate() -> &'static str {
+    "fl.blake3_hash NOT LIKE 'deferred:%'
+     AND (
+         SELECT COUNT(DISTINCT o.device_id)
+         FROM file_locations o
+         WHERE o.blake3_hash = fl.blake3_hash
+           AND o.device_id <> fl.device_id
+           AND o.file_size = fl.file_size
+     ) >= 2"
+}
+
+/// Count and total size of scoped files that are safe to delete.
+pub async fn get_scan_redundancy_totals(
+    pool: &DbPool,
+    device_id: &str,
+    prefix: &str,
+) -> Result<(i64, i64), AppError> {
+    let sql = format!(
+        "SELECT COUNT(*), COALESCE(SUM(fl.file_size), 0)
+         FROM file_locations fl
+         WHERE {} AND {}",
+        scope_clause("fl", "file_path", prefix),
+        redundant_predicate()
+    );
+    let row = bind_scope!(sqlx::query_as::<_, (i64, i64)>(&sql), device_id, prefix)
+        .fetch_one(pool)
+        .await?;
+    Ok(row)
+}
+
+/// The scoped files that are safe to delete. `limit` caps the returned rows
+/// for display; pass `None` when the caller intends to act on all of them.
+pub async fn get_scan_redundant_files(
+    pool: &DbPool,
+    device_id: &str,
+    prefix: &str,
+    limit: Option<i64>,
+) -> Result<Vec<(String, String, i64, String)>, AppError> {
+    let sql = format!(
+        "SELECT fl.file_path, fl.file_name, fl.file_size, fl.blake3_hash
+         FROM file_locations fl
+         WHERE {} AND {}
+         ORDER BY fl.file_size DESC{}",
+        scope_clause("fl", "file_path", prefix),
+        redundant_predicate(),
+        match limit {
+            Some(_) => " LIMIT ?",
+            None => "",
+        }
+    );
+    let query = bind_scope!(
+        sqlx::query_as::<_, (String, String, i64, String)>(&sql),
+        device_id,
+        prefix
+    );
+    let query = match limit {
+        Some(n) => query.bind(n),
+        None => query,
+    };
+    Ok(query.fetch_all(pool).await?)
 }
 
 // --- Project queries ---
@@ -919,6 +1251,43 @@ pub async fn get_project_stats(
     })
 }
 
+/// Devices holding at least one file of the project's date window.
+///
+/// `is_connected` is left `false`; only the command layer can probe mounts.
+pub async fn get_project_diff_devices(
+    pool: &DbPool,
+    start_date: &str,
+    end_date: &str,
+) -> Result<Vec<DiffDeviceOption>, AppError> {
+    let rows = sqlx::query_as::<_, (String, String, i64)>(
+        "SELECT fl.device_id, d.label, COUNT(DISTINCT fl.blake3_hash)
+         FROM file_locations fl
+         JOIN storage_devices d ON d.id = fl.device_id
+         WHERE fl.blake3_hash IN (
+             SELECT fl2.blake3_hash
+             FROM file_locations fl2
+             GROUP BY fl2.blake3_hash
+             HAVING MIN(fl2.modified_at) >= ? AND MIN(fl2.modified_at) < date(?, '+1 day')
+         )
+         GROUP BY fl.device_id, d.label
+         ORDER BY d.label",
+    )
+    .bind(start_date)
+    .bind(end_date)
+    .fetch_all(pool)
+    .await?;
+
+    Ok(rows
+        .into_iter()
+        .map(|(device_id, label, file_count)| DiffDeviceOption {
+            device_id,
+            label,
+            file_count,
+            is_connected: false,
+        })
+        .collect())
+}
+
 // --- Network drive queries ---
 
 pub async fn insert_network_drive(pool: &DbPool, drive: &NetworkDrive) -> Result<(), AppError> {
@@ -1058,17 +1427,13 @@ pub async fn get_dir_cache(
     device_id: &str,
     prefix: &str,
 ) -> Result<HashMap<String, DirCacheEntry>, AppError> {
-    let prefix_pattern = format!(
-        "{}%",
-        prefix.replace('%', "\\%").replace('_', "\\_")
+    let sql = format!(
+        "SELECT dir_path, dir_mtime, file_count FROM dir_cache WHERE {}",
+        scope_clause("", "dir_path", prefix)
     );
-    let rows = sqlx::query_as::<_, (String, String, i64)>(
-        "SELECT dir_path, dir_mtime, file_count FROM dir_cache WHERE device_id = ? AND dir_path LIKE ? ESCAPE '\\'"
-    )
-    .bind(device_id)
-    .bind(&prefix_pattern)
-    .fetch_all(pool)
-    .await?;
+    let rows = bind_scope!(sqlx::query_as::<_, (String, String, i64)>(&sql), device_id, prefix)
+        .fetch_all(pool)
+        .await?;
     let mut map = HashMap::with_capacity(rows.len());
     for (path, mtime, count) in rows {
         map.insert(path, DirCacheEntry { dir_mtime: mtime, file_count: count });
@@ -1107,17 +1472,13 @@ pub async fn remove_stale_dir_cache(
     prefix: &str,
     seen_dirs: &[String],
 ) -> Result<(), AppError> {
-    let prefix_pattern = format!(
-        "{}%",
-        prefix.replace('%', "\\%").replace('_', "\\_")
+    let sql = format!(
+        "SELECT dir_path FROM dir_cache WHERE {}",
+        scope_clause("", "dir_path", prefix)
     );
-    let existing = sqlx::query_as::<_, (String,)>(
-        "SELECT dir_path FROM dir_cache WHERE device_id = ? AND dir_path LIKE ? ESCAPE '\\'"
-    )
-    .bind(device_id)
-    .bind(&prefix_pattern)
-    .fetch_all(pool)
-    .await?;
+    let existing = bind_scope!(sqlx::query_as::<_, (String,)>(&sql), device_id, prefix)
+        .fetch_all(pool)
+        .await?;
 
     let seen_set: std::collections::HashSet<&str> = seen_dirs.iter().map(|s| s.as_str()).collect();
     let stale: Vec<&str> = existing
@@ -1366,6 +1727,24 @@ pub async fn touch_full_hash_verified(pool: &DbPool, location_id: i64) -> Result
     Ok(())
 }
 
+pub async fn set_full_hash_by_device_and_path(
+    pool: &DbPool,
+    device_id: &str,
+    file_path: &str,
+    full_hash: &str,
+) -> Result<(), AppError> {
+    sqlx::query(
+        "UPDATE file_locations SET full_hash = ?, full_hash_verified_at = datetime('now')
+         WHERE device_id = ? AND file_path = ?",
+    )
+    .bind(full_hash)
+    .bind(device_id)
+    .bind(file_path)
+    .execute(pool)
+    .await?;
+    Ok(())
+}
+
 pub async fn update_network_drive_mount_point(
     pool: &DbPool,
     id: &str,
@@ -1382,4 +1761,121 @@ pub async fn update_network_drive_mount_point(
         .execute(pool)
         .await?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::models::DetectedDisk;
+
+    async fn test_pool() -> DbPool {
+        let dir = std::env::temp_dir().join(format!("ofm-test-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let pool = init_pool(&dir.join("test.db")).await.unwrap();
+        run_migrations(&pool).await.unwrap();
+        pool
+    }
+
+    #[tokio::test]
+    async fn update_mount_point_updates_row() {
+        let pool = test_pool().await;
+        let disk = DetectedDisk {
+            id: "dev-1".into(),
+            label: "Test".into(),
+            mount_point: "/Volumes/Old".into(),
+            total_bytes: 100,
+            available_bytes: 50,
+            is_removable: false,
+        };
+        upsert_device(&pool, &disk).await.unwrap();
+
+        update_device_mount_point(&pool, "dev-1", "/Volumes/New", 42)
+            .await
+            .unwrap();
+
+        let dev = get_device(&pool, "dev-1").await.unwrap();
+        assert_eq!(dev.mount_point, "/Volumes/New");
+        assert_eq!(dev.available_bytes, 42);
+        assert_eq!(dev.total_bytes, 0); // manual re-point resets unreliable total
+    }
+
+    #[tokio::test]
+    async fn file_sample_limited() {
+        let pool = test_pool().await;
+        let disk = DetectedDisk {
+            id: "dev-1".into(),
+            label: "Test".into(),
+            mount_point: "/Volumes/Old".into(),
+            total_bytes: 0,
+            available_bytes: 0,
+            is_removable: false,
+        };
+        upsert_device(&pool, &disk).await.unwrap();
+        for i in 0..5 {
+            upsert_file(&pool, &format!("hash-{i}"), 10, "f", "jpg").await.unwrap();
+            upsert_location(
+                &pool,
+                &format!("hash-{i}"),
+                "dev-1",
+                &format!("sub/file-{i}.jpg"),
+                &format!("file-{i}.jpg"),
+                10,
+                Some("2026-01-01T00:00:00Z"),
+                "full",
+            )
+            .await
+            .unwrap();
+        }
+        let sample = get_device_file_sample(&pool, "dev-1", 3).await.unwrap();
+        assert_eq!(sample.len(), 3);
+        let all = get_device_file_sample(&pool, "dev-1", 20).await.unwrap();
+        assert_eq!(all.len(), 5);
+    }
+
+    #[tokio::test]
+    async fn project_diff_devices_counts_files_per_device() {
+        let pool = test_pool().await;
+        for (id, mount) in [("dev-1", "/Volumes/One"), ("dev-2", "/Volumes/Two")] {
+            upsert_device(
+                &pool,
+                &DetectedDisk {
+                    id: id.into(),
+                    label: format!("{id} label"),
+                    mount_point: mount.into(),
+                    total_bytes: 0,
+                    available_bytes: 0,
+                    is_removable: false,
+                },
+            )
+            .await
+            .unwrap();
+        }
+
+        // Two files inside the project window, one outside it.
+        for (hash, modified) in [
+            ("h1", "2026-08-14 10:00:00"),
+            ("h2", "2026-08-14 11:00:00"),
+            ("h3", "2026-09-01 10:00:00"),
+        ] {
+            upsert_file(&pool, hash, 10, "f.cr3", "cr3").await.unwrap();
+            upsert_location(&pool, hash, "dev-1", &format!("2026/{hash}.cr3"), "f.cr3", 10, Some(modified), "full")
+                .await
+                .unwrap();
+        }
+        // dev-2 holds only one of the in-window files.
+        upsert_location(&pool, "h1", "dev-2", "2026/h1.cr3", "f.cr3", 10, Some("2026-08-14 10:00:00"), "full")
+            .await
+            .unwrap();
+
+        let devices = get_project_diff_devices(&pool, "2026-08-14", "2026-08-14")
+            .await
+            .unwrap();
+
+        assert_eq!(devices.len(), 2);
+        let one = devices.iter().find(|d| d.device_id == "dev-1").unwrap();
+        let two = devices.iter().find(|d| d.device_id == "dev-2").unwrap();
+        assert_eq!(one.file_count, 2, "the September file is out of the window");
+        assert_eq!(two.file_count, 1);
+        assert_eq!(one.label, "dev-1 label");
+    }
 }

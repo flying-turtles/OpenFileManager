@@ -7,7 +7,11 @@ import type {
   DashboardStats,
   DirEntry,
   ScanEvent,
+  ScanSummary,
   ImportEvent,
+  SourceCleanupPreview,
+  SourceCleanupResult,
+  SourceCleanupEvent,
   TransferCheck,
   TransferEvent,
   Project,
@@ -23,6 +27,15 @@ import type {
   SimilarGroup,
   SimilarScanEvent,
   VerifyEvent,
+  ReconnectCheck,
+  MovePlanSummary,
+  MoveEvent,
+  DiffDeviceOption,
+  ProjectDiff,
+  DiffEvent,
+  DiffCopyItem,
+  DiffCopyResult,
+  DiffCopyEvent,
 } from "../types";
 
 export async function detectDevices(): Promise<StorageDevice[]> {
@@ -54,6 +67,20 @@ export async function removeDevice(deviceId: string): Promise<void> {
   return invoke("remove_device", { deviceId });
 }
 
+export async function checkReconnectTarget(
+  deviceId: string,
+  newPath: string
+): Promise<ReconnectCheck> {
+  return invoke("check_reconnect_target", { deviceId, newPath });
+}
+
+export async function reconnectDevice(
+  deviceId: string,
+  newPath: string
+): Promise<StorageDevice> {
+  return invoke("reconnect_device", { deviceId, newPath });
+}
+
 export async function startScan(
   target: string,
   onEvent: (event: ScanEvent) => void
@@ -77,6 +104,30 @@ export async function getPendingScans(): Promise<PendingScan[]> {
 
 export async function dismissPendingScan(id: number): Promise<void> {
   return invoke("dismiss_pending_scan", { id });
+}
+
+export async function getScanSummary(target: string): Promise<ScanSummary> {
+  return invoke("get_scan_summary", { target });
+}
+
+export async function getScanCleanupPreview(
+  target: string
+): Promise<SourceCleanupPreview> {
+  return invoke("get_scan_cleanup_preview", { target });
+}
+
+export async function deleteRedundantScannedFiles(
+  target: string,
+  permanent: boolean,
+  onEvent: (event: SourceCleanupEvent) => void
+): Promise<SourceCleanupResult> {
+  const channel = new Channel<SourceCleanupEvent>();
+  channel.onmessage = onEvent;
+  return invoke("delete_redundant_scanned_files", {
+    target,
+    permanent,
+    onEvent: channel,
+  });
 }
 
 export async function getFilesOnDevice(
@@ -182,6 +233,19 @@ export async function cancelImport(): Promise<void> {
   return invoke("cancel_import");
 }
 
+export async function getImportCleanupPreview(): Promise<SourceCleanupPreview> {
+  return invoke("get_import_cleanup_preview");
+}
+
+export async function deleteImportedSourceFiles(
+  permanent: boolean,
+  onEvent: (event: SourceCleanupEvent) => void
+): Promise<SourceCleanupResult> {
+  const channel = new Channel<SourceCleanupEvent>();
+  channel.onmessage = onEvent;
+  return invoke("delete_imported_source_files", { permanent, onEvent: channel });
+}
+
 export async function ejectDevice(mountPoint: string): Promise<void> {
   return invoke("eject_device", { mountPoint });
 }
@@ -272,6 +336,10 @@ export async function openFile(
   filePath: string
 ): Promise<void> {
   return invoke("open_file", { deviceId, filePath });
+}
+
+export async function revealInFinder(path: string): Promise<void> {
+  return invoke("reveal_in_finder", { path });
 }
 
 export async function checkProjectTransfer(
@@ -367,4 +435,61 @@ export async function verifyDevice(
 
 export async function cancelVerify(): Promise<void> {
   return invoke("cancel_verify");
+}
+
+export async function planMove(
+  sources: string[],
+  dest: string
+): Promise<MovePlanSummary> {
+  return invoke("plan_move", { sources, dest });
+}
+
+export async function startMove(
+  permanent: boolean,
+  onEvent: (event: MoveEvent) => void
+): Promise<void> {
+  const channel = new Channel<MoveEvent>();
+  channel.onmessage = onEvent;
+  return invoke("start_move", { permanent, onEvent: channel });
+}
+
+export async function cancelMove(): Promise<void> {
+  return invoke("cancel_move");
+}
+
+export async function getProjectDiffDevices(
+  projectId: number
+): Promise<DiffDeviceOption[]> {
+  return invoke("get_project_diff_devices", { projectId });
+}
+
+export async function computeProjectDiff(
+  projectId: number,
+  sotDeviceId: string,
+  onEvent: (event: DiffEvent) => void
+): Promise<ProjectDiff> {
+  const channel = new Channel<DiffEvent>();
+  channel.onmessage = onEvent;
+  return invoke("compute_project_diff", { projectId, sotDeviceId, onEvent: channel });
+}
+
+export async function cancelProjectDiff(): Promise<void> {
+  return invoke("cancel_project_diff");
+}
+
+export async function copyDiffFiles(
+  items: DiffCopyItem[],
+  onEvent: (event: DiffCopyEvent) => void
+): Promise<DiffCopyResult> {
+  const channel = new Channel<DiffCopyEvent>();
+  channel.onmessage = onEvent;
+  return invoke("copy_diff_files", { items, onEvent: channel });
+}
+
+export async function cancelDiffCopy(): Promise<void> {
+  return invoke("cancel_diff_copy");
+}
+
+export async function purgeDiffLocations(locationIds: number[]): Promise<number> {
+  return invoke("purge_diff_locations", { locationIds });
 }

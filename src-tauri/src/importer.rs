@@ -43,6 +43,18 @@ pub async fn copy_file_cancellable(
     Ok(true)
 }
 
+/// Base directory that analysis paths are made relative to.
+/// A source can be a folder or a single file; for a file the base is its
+/// parent, otherwise `strip_prefix` against the file itself yields an empty
+/// relative path.
+fn relative_base(source: &Path, is_file: bool) -> PathBuf {
+    if is_file {
+        source.parent().unwrap_or(source).to_path_buf()
+    } else {
+        source.to_path_buf()
+    }
+}
+
 pub async fn analyze_sd_card(
     pool: DbPool,
     sd_mount: PathBuf,
@@ -59,6 +71,12 @@ pub async fn analyze_sd_card(
         .find(|v| v.id == device_id)
         .map(|v| v.label.clone())
         .unwrap_or_else(|| "SD Card".to_string());
+
+    let source_is_file = tokio::fs::metadata(&sd_mount)
+        .await
+        .map(|m| m.is_file())
+        .unwrap_or(false);
+    let base = relative_base(&sd_mount, source_is_file);
 
     let files: Vec<PathBuf> = WalkBuilder::new(&sd_mount)
         .hidden(true)
@@ -109,7 +127,7 @@ pub async fn analyze_sd_card(
             .map(|dt| dt.format("%Y-%m-%d %H:%M:%S").to_string());
 
         let relative_path = file_path
-            .strip_prefix(&sd_mount)
+            .strip_prefix(&base)
             .unwrap_or(file_path)
             .to_string_lossy()
             .to_string();
@@ -171,6 +189,61 @@ pub async fn analyze_sd_card(
         total_bytes,
         new_file_count,
         existing_file_count,
+    })
+}
+
+/// Files from the analysis that are safe to remove from the source device:
+/// copies exist on at least two distinct devices other than the source,
+/// checked against the current DB state (so imports just made count too).
+pub async fn compute_source_cleanup(
+    pool: &DbPool,
+    analysis: &ImportAnalysis,
+) -> Result<SourceCleanupPreview, AppError> {
+    let hashes: Vec<String> = analysis.files.iter().map(|f| f.blake3_hash.clone()).collect();
+    let locations_map = db::get_locations_for_hashes(pool, &hashes).await?;
+
+    let mut files = Vec::new();
+    let mut total_bytes: i64 = 0;
+    let mut skipped_count: u64 = 0;
+
+    for f in &analysis.files {
+        // Size must match too: blake3_hash only covers the first 4 MB
+        // (hasher::hash_file_partial_sync), so files sharing a header — very
+        // common for video containers — collide on hash alone.
+        let mut backup_device_ids: Vec<String> = locations_map
+            .get(&f.blake3_hash)
+            .map(|locs| {
+                locs.iter()
+                    .filter(|l| l.file_size == f.file_size)
+                    .map(|l| l.device_id.clone())
+                    .collect()
+            })
+            .unwrap_or_default();
+        backup_device_ids.sort();
+        backup_device_ids.dedup();
+        backup_device_ids.retain(|d| *d != analysis.sd_device_id);
+
+        if backup_device_ids.len() >= 2 {
+            total_bytes += f.file_size;
+            files.push(SourceCleanupFile {
+                source_path: f.source_path.clone(),
+                relative_path: f.relative_path.clone(),
+                file_name: f.file_name.clone(),
+                file_size: f.file_size,
+                backup_device_ids,
+            });
+        } else {
+            skipped_count += 1;
+        }
+    }
+
+    Ok(SourceCleanupPreview {
+        sd_device_id: analysis.sd_device_id.clone(),
+        sd_label: analysis.sd_label.clone(),
+        file_count: files.len() as i64,
+        files,
+        total_bytes,
+        skipped_count,
     })
 }
 
@@ -366,4 +439,27 @@ pub async fn run_import(
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn folder_source_is_its_own_base() {
+        let src = Path::new("/Volumes/SD/DCIM");
+        assert_eq!(relative_base(src, false), PathBuf::from("/Volumes/SD/DCIM"));
+    }
+
+    #[test]
+    fn file_source_bases_on_parent() {
+        let src = Path::new("/Volumes/SD/DCIM/IMG_0001.CR3");
+        let base = relative_base(src, true);
+        assert_eq!(base, PathBuf::from("/Volumes/SD/DCIM"));
+        assert_eq!(
+            src.strip_prefix(&base).unwrap(),
+            Path::new("IMG_0001.CR3"),
+            "single-file import must keep a non-empty relative path"
+        );
+    }
 }

@@ -7,6 +7,21 @@
   margin-bottom: 16px;
 }
 
+.source-browse-row {
+  display: flex;
+  gap: 8px;
+}
+
+.source-kind-tag {
+  margin-left: 6px;
+  padding: 1px 6px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  font-size: 11px;
+  font-weight: 400;
+  color: var(--text-muted);
+}
+
 .import-summary {
   margin-bottom: 20px;
 }

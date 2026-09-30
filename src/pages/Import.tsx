@@ -3,7 +3,14 @@ import { open } from "@tauri-apps/plugin-dialog";
 import { useImport } from "../hooks/useImport";
 import { useDevices } from "../hooks/useDevices";
 import { formatBytes } from "../utils/format";
+import { SourceCleanupModal } from "../components/SourceCleanupModal";
 import "./Import.css";
+
+const kindLabel = {
+  device: "Device",
+  folder: "Folder",
+  file: "Single file",
+} as const;
 
 export function Import() {
   const {
@@ -22,7 +29,24 @@ export function Import() {
   const { devices } = useDevices();
   const [selectedSource, setSelectedSource] = useState("");
   const [sourcePath, setSourcePath] = useState("");
+  // What the path came from, purely for labelling. Null after a manual edit,
+  // since we can no longer say whether the typed path is a file or a folder.
+  const [sourceKind, setSourceKind] = useState<
+    "device" | "folder" | "file" | null
+  >(null);
   const [selectedTargets, setSelectedTargets] = useState<string[]>([]);
+  const [showCleanup, setShowCleanup] = useState(false);
+  const [cleanupDidDelete, setCleanupDidDelete] = useState(false);
+
+  const closeCleanup = () => {
+    setShowCleanup(false);
+    // Deleting source files invalidates the analysis — force a re-analyze
+    // before any import can run against paths that no longer exist.
+    if (cleanupDidDelete && phase === "reviewed") {
+      setCleanupDidDelete(false);
+      reset();
+    }
+  };
 
   const removableDevices = devices.filter(
     (d) => d.isConnected && d.mountPoint !== "/"
@@ -32,6 +56,20 @@ export function Import() {
   );
   const deviceNames: Record<string, string> = {};
   for (const d of devices) deviceNames[d.id] = d.label;
+
+  const browseSource = async (directory: boolean) => {
+    const selected = await open({
+      directory,
+      multiple: false,
+      defaultPath: sourcePath || selectedSource || undefined,
+    });
+    if (typeof selected !== "string") return;
+    setSourcePath(selected);
+    setSourceKind(directory ? "folder" : "file");
+    // A browsed path may sit outside the dropdown device, so the dropdown no
+    // longer describes the source.
+    setSelectedSource("");
+  };
 
   const toggleTarget = (id: string) => {
     setSelectedTargets((prev) =>
@@ -56,6 +94,7 @@ export function Import() {
               onChange={(e) => {
                 setSelectedSource(e.target.value);
                 setSourcePath(e.target.value);
+                setSourceKind(e.target.value ? "device" : null);
               }}
             >
               <option value="">Select SD card / removable drive...</option>
@@ -67,25 +106,43 @@ export function Import() {
               ))}
             </select>
           </div>
-          {selectedSource && (
+
+          <div className="form-group">
+            <label>Or pick a source yourself</label>
+            <div className="source-browse-row">
+              <button
+                onClick={() => browseSource(true)}
+              >
+                Browse Folder...
+              </button>
+              <button
+                onClick={() => browseSource(false)}
+              >
+                Browse File...
+              </button>
+            </div>
+          </div>
+
+          {sourcePath && (
             <div className="form-group">
-              <label>Path (narrow to a specific folder)</label>
+              <label>
+                Path{" "}
+                {sourceKind && (
+                  <span className="source-kind-tag">{kindLabel[sourceKind]}</span>
+                )}
+              </label>
               <div className="path-input-row">
                 <input
                   type="text"
                   value={sourcePath}
-                  onChange={(e) => setSourcePath(e.target.value)}
+                  onChange={(e) => {
+                    setSourcePath(e.target.value);
+                    setSourceKind(null);
+                  }}
                   placeholder={selectedSource}
                 />
                 <button
-                  onClick={async () => {
-                    const selected = await open({
-                      directory: true,
-                      multiple: false,
-                      defaultPath: selectedSource,
-                    });
-                    if (selected) setSourcePath(selected);
-                  }}
+                  onClick={() => browseSource(true)}
                 >
                   Browse
                 </button>
@@ -245,6 +302,9 @@ export function Import() {
 
           <div className="import-actions">
             <button onClick={reset}>Back</button>
+            <button className="btn-danger" onClick={() => setShowCleanup(true)}>
+              Delete Backed-Up Files from {analysis.sdLabel}
+            </button>
             <button
               className="btn-primary"
               disabled={selectedTargets.length === 0}
@@ -397,6 +457,9 @@ export function Import() {
           </div>
 
           <div className="import-actions mt-16">
+            <button className="btn-danger" onClick={() => setShowCleanup(true)}>
+              Delete Backed-Up Files from {analysis.sdLabel}
+            </button>
             {sourceDevice?.isRemovable && sourceDevice.isConnected && (
               <button onClick={() => eject(sourceDevice.mountPoint)}>
                 Eject SD Card
@@ -417,6 +480,14 @@ export function Import() {
         </div>
         );
       })()}
+
+      {showCleanup && (
+        <SourceCleanupModal
+          deviceNames={deviceNames}
+          onDeleted={() => setCleanupDidDelete(true)}
+          onClose={closeCleanup}
+        />
+      )}
     </div>
   );
 }

@@ -23,6 +23,11 @@ pub async fn detect_devices(state: State<'_, AppState>) -> Result<Vec<StorageDev
         for (fmid, current_mount) in devices::scan_volumes_for_filemanager_ids() {
             if let Some(existing) = all_devs.iter().find(|d| d.id == fmid) {
                 if existing.mount_point != current_mount {
+                    // Stored path still reachable → user's (possibly manual) mapping wins;
+                    // only auto-heal devices whose current path is gone
+                    if super::path_online(&existing.mount_point).await {
+                        continue;
+                    }
                     let (_, avail) = devices::disk_space_for_path(&current_mount);
                     let updated = DetectedDisk {
                         id: fmid,
@@ -58,7 +63,7 @@ pub async fn detect_devices(state: State<'_, AppState>) -> Result<Vec<StorageDev
         };
         let _ = db::upsert_device(&state.pool, &updated).await;
     }
-    Ok(mark_connected(all, &connected_ids))
+    Ok(mark_connected(all, &connected_ids).await)
 }
 
 #[tauri::command]
@@ -66,7 +71,7 @@ pub async fn get_devices(state: State<'_, AppState>) -> Result<Vec<StorageDevice
     let disks = devices::detect_volumes();
     let connected_ids: HashSet<String> = disks.iter().map(|d| d.id.clone()).collect();
     let all = db::get_all_devices(&state.pool).await?;
-    Ok(mark_connected(all, &connected_ids))
+    Ok(mark_connected(all, &connected_ids).await)
 }
 
 #[tauri::command]
@@ -143,6 +148,111 @@ pub async fn add_location(
         .into_iter()
         .find(|d| d.id == id)
         .ok_or_else(|| AppError::General("Failed to retrieve added device".into()))
+}
+
+#[tauri::command]
+pub async fn check_reconnect_target(
+    state: State<'_, AppState>,
+    device_id: String,
+    new_path: String,
+) -> Result<ReconnectCheck, AppError> {
+    if !super::path_online_within(&new_path, 5).await {
+        return Err(AppError::General(format!("Path is not reachable: {}", new_path)));
+    }
+
+    let marker_path = std::path::Path::new(&new_path).join(devices::FILEMANAGER_ID_FILE);
+    let marker = tokio::task::spawn_blocking(move || std::fs::read_to_string(marker_path).ok())
+        .await
+        .unwrap_or(None);
+    let (marker_status, foreign_id) = devices::evaluate_marker(marker.as_deref(), &device_id);
+
+    let sample = db::get_device_file_sample(&state.pool, &device_id, 20).await?;
+    let sampled_files = sample.len() as i64;
+    let base = std::path::PathBuf::from(&new_path);
+    let found_files = tokio::task::spawn_blocking(move || {
+        sample
+            .iter()
+            .filter(|f| base.join(&f.file_path).is_file())
+            .count() as i64
+    })
+    .await
+    .unwrap_or(0);
+
+    Ok(ReconnectCheck {
+        marker_status,
+        foreign_id,
+        found_files,
+        sampled_files,
+    })
+}
+
+#[tauri::command]
+pub async fn reconnect_device(
+    state: State<'_, AppState>,
+    device_id: String,
+    new_path: String,
+) -> Result<StorageDevice, AppError> {
+    if !super::path_online_within(&new_path, 5).await {
+        return Err(AppError::General(format!("Path is not reachable: {}", new_path)));
+    }
+
+    let all = db::get_all_devices(&state.pool).await?;
+    if !all.iter().any(|d| d.id == device_id) {
+        return Err(AppError::General(format!("Unknown device: {}", device_id)));
+    }
+    if let Some(other) = all
+        .iter()
+        .find(|d| d.id != device_id && d.mount_point == new_path)
+    {
+        return Err(AppError::General(format!(
+            "Path is already used by device \"{}\"",
+            other.label
+        )));
+    }
+
+    // Marker belonging to a DIFFERENT registered device → hard reject
+    let marker_path = std::path::Path::new(&new_path).join(devices::FILEMANAGER_ID_FILE);
+    let mp = marker_path.clone();
+    let marker_result = tokio::task::spawn_blocking(move || std::fs::read_to_string(mp))
+        .await
+        .map_err(|e| AppError::General(e.to_string()))?;
+    let marker = match marker_result {
+        Ok(contents) => Some(contents),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => None,
+        Err(e) => {
+            return Err(AppError::General(format!(
+                "Could not read id marker at {}: {}",
+                new_path, e
+            )))
+        }
+    };
+    if let Some(m) = marker.map(|s| s.trim().to_string()) {
+        if !m.is_empty() && m != device_id {
+            if let Some(other) = all.iter().find(|d| d.id == m) {
+                return Err(AppError::General(format!(
+                    "Folder is marked as device \"{}\" — remove that device first or pick another folder",
+                    other.label
+                )));
+            }
+        }
+    }
+
+    // Adopt: write marker BEFORE touching the DB, so a read-only fs aborts cleanly
+    let id_clone = device_id.clone();
+    let wp = marker_path.clone();
+    tokio::task::spawn_blocking(move || std::fs::write(&wp, &id_clone))
+        .await
+        .map_err(|e| AppError::General(e.to_string()))?
+        .map_err(|e| AppError::General(format!("Failed to write id marker: {}", e)))?;
+
+    let path_clone = new_path.clone();
+    let (_, avail) =
+        tokio::task::spawn_blocking(move || devices::disk_space_for_path(&path_clone))
+            .await
+            .unwrap_or((0, 0));
+
+    db::update_device_mount_point(&state.pool, &device_id, &new_path, avail).await?;
+    db::get_device(&state.pool, &device_id).await
 }
 
 #[tauri::command]

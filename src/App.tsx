@@ -7,20 +7,28 @@ import { Devices } from "./pages/Devices";
 import { Scanner } from "./pages/Scanner";
 import { FileBrowser } from "./pages/FileBrowser";
 import { Import } from "./pages/Import";
+import { Move } from "./pages/Move";
 import { Projects } from "./pages/Projects";
 import { Transfer } from "./pages/Transfer";
 import { Backup } from "./pages/Backup";
 import { Similar } from "./pages/Similar";
+import { ProjectDiff } from "./pages/ProjectDiff";
 import "./App.css";
 
-type Page = "dashboard" | "devices" | "scanner" | "files" | "import" | "transfer" | "projects" | "backup" | "similar";
+type Page = "dashboard" | "devices" | "scanner" | "files" | "import" | "move" | "transfer" | "projects" | "backup" | "similar" | "projectDiff";
 
 function App() {
   const [page, setPage] = useState<Page>("dashboard");
   const [scanDevice, setScanDevice] = useState<StorageDevice | undefined>();
   const [transferProject, setTransferProject] = useState<{ id: number; title: string } | null>(null);
+  const [openProject, setOpenProject] = useState<number | undefined>();
   const [filesFilter, setFilesFilter] = useState<FilesFilter>("all");
   const [connectPrompts, setConnectPrompts] = useState<StorageDevice[]>([]);
+  const [diffTarget, setDiffTarget] = useState<{
+    projectId: number;
+    projectTitle: string;
+    sotDeviceId: string;
+  } | null>(null);
 
   // Offer a scan when a drive that is already in the index reconnects
   useEffect(() => {
@@ -65,15 +73,28 @@ function App() {
     setPage("transfer");
   }, []);
 
+  const handleShowDiff = useCallback(
+    (projectId: number, projectTitle: string, sotDeviceId: string) => {
+      setDiffTarget({ projectId, projectTitle, sotDeviceId });
+      setPage("projectDiff");
+    },
+    []
+  );
+
   const handleOpenFiles = useCallback((filter: FilesFilter) => {
     setFilesFilter(filter);
     setPage("files");
   }, []);
 
+  const handleOpenProject = useCallback((id: number) => {
+    setOpenProject(id);
+    setPage("projects");
+  }, []);
+
   return (
     <div className="app">
       <nav className="sidebar">
-        <div className="nav-title">FileManager</div>
+        <div className="nav-title">OpenFileManager</div>
         <button className={page === "dashboard" ? "active" : ""} onClick={() => setPage("dashboard")}>
           Dashboard
         </button>
@@ -92,7 +113,13 @@ function App() {
         <button className={page === "transfer" ? "active" : ""} onClick={() => setPage("transfer")}>
           Transfer
         </button>
-        <button className={page === "projects" ? "active" : ""} onClick={() => setPage("projects")}>
+        <button className={page === "move" ? "active" : ""} onClick={() => setPage("move")}>
+          Move
+        </button>
+        <button
+          className={page === "projects" ? "active" : ""}
+          onClick={() => { setOpenProject(undefined); setPage("projects"); }}
+        >
           Projects
         </button>
         <button className={page === "similar" ? "active" : ""} onClick={() => setPage("similar")}>
@@ -138,7 +165,7 @@ function App() {
           <Devices onScanDevice={handleScanDevice} />
         </div>
         <div className={page === "scanner" ? "contents-display" : "hidden-display"}>
-          <Scanner initialDevice={scanDevice} />
+          <Scanner initialDevice={scanDevice} onOpenProject={handleOpenProject} />
         </div>
         {page === "files" && <FileBrowser initialFilter={filesFilter} />}
         <div className={page === "import" ? "contents-display" : "hidden-display"}>
@@ -147,13 +174,34 @@ function App() {
         <div className={page === "transfer" ? "contents-display" : "hidden-display"}>
           <Transfer project={transferProject} />
         </div>
-        {page === "projects" && <Projects onTransferProject={handleTransferProject} />}
+        <div className={page === "move" ? "contents-display" : "hidden-display"}>
+          <Move />
+        </div>
+        {page === "projects" && (
+          <Projects
+            onTransferProject={handleTransferProject}
+            onShowDiff={handleShowDiff}
+            initialProjectId={openProject}
+          />
+        )}
         <div className={page === "backup" ? "contents-display" : "hidden-display"}>
           <Backup />
         </div>
         <div className={page === "similar" ? "contents-display" : "hidden-display"}>
           <Similar />
         </div>
+        {page === "projectDiff" && diffTarget && (
+          <ProjectDiff
+            projectId={diffTarget.projectId}
+            projectTitle={diffTarget.projectTitle}
+            sotDeviceId={diffTarget.sotDeviceId}
+            onBack={() => {
+              setOpenProject(diffTarget.projectId);
+              setDiffTarget(null);
+              setPage("projects");
+            }}
+          />
+        )}
       </main>
     </div>
   );

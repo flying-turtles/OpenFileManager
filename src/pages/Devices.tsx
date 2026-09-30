@@ -7,7 +7,10 @@ import { DeviceCard } from "../components/DeviceCard";
 import { NetworkDriveCard } from "../components/NetworkDriveCard";
 import { AddLocationModal } from "../components/AddLocationModal";
 import { AddNetworkDriveModal } from "../components/AddNetworkDriveModal";
-import { addLocation } from "../api/commands";
+import { open } from "@tauri-apps/plugin-dialog";
+import type { ReconnectCheck } from "../types";
+import { ReconnectModal } from "../components/ReconnectModal";
+import { addLocation, checkReconnectTarget } from "../api/commands";
 import "./Devices.css";
 
 interface Props {
@@ -27,6 +30,24 @@ export function Devices({ onScanDevice }: Props) {
   const verify = useVerify();
   const [showAddModal, setShowAddModal] = useState(false);
   const [showAddNetworkModal, setShowAddNetworkModal] = useState(false);
+  const [reconnectTarget, setReconnectTarget] = useState<{
+    device: StorageDevice;
+    path: string;
+    check: ReconnectCheck;
+  } | null>(null);
+  const [reconnectError, setReconnectError] = useState("");
+
+  const handleReconnect = async (device: StorageDevice) => {
+    const selected = await open({ directory: true, multiple: false });
+    if (!selected) return;
+    setReconnectError("");
+    try {
+      const check = await checkReconnectTarget(device.id, selected);
+      setReconnectTarget({ device, path: selected, check });
+    } catch (e) {
+      setReconnectError(String(e));
+    }
+  };
 
   const verifyingDevice = devices.find((d) => d.id === verify.deviceId);
   const verifyPct =
@@ -56,6 +77,12 @@ export function Devices({ onScanDevice }: Props) {
     const key = grouped.has(d.deviceType) ? d.deviceType : "unknown";
     grouped.get(key)!.push(d);
   }
+
+  // Network drives get their own storage_devices row; they have their own
+  // mount logic, so hide the manual Reconnect button on their cards.
+  const networkBacked = new Set(
+    network.drives.flatMap((d) => [d.id, d.mountPoint])
+  );
 
   return (
     <div className="page">
@@ -117,6 +144,15 @@ export function Devices({ onScanDevice }: Props) {
         <div className="error-msg">{verify.errors[verify.errors.length - 1]}</div>
       )}
 
+      {reconnectError && (
+        <div className="error-msg">
+          <div className="flex-row gap-8" style={{ justifyContent: "space-between", alignItems: "center" }}>
+            <span>{reconnectError}</span>
+            <button onClick={() => setReconnectError("")}>Dismiss</button>
+          </div>
+        </div>
+      )}
+
       {network.drives.length > 0 && (
         <div className="mb-24">
           <h2 className="text-base mb-12 text-muted-color">Network Drives</h2>
@@ -170,6 +206,11 @@ export function Devices({ onScanDevice }: Props) {
                   onVerify={(dev) => verify.verify(dev.id, dev.label)}
                   verifyDisabled={verify.phase === "running"}
                   onRemove={handleRemove}
+                  onReconnect={
+                    networkBacked.has(d.id) || networkBacked.has(d.mountPoint)
+                      ? undefined
+                      : handleReconnect
+                  }
                 />
               ))}
             </div>
@@ -192,6 +233,19 @@ export function Devices({ onScanDevice }: Props) {
         <AddNetworkDriveModal
           onAdd={network.add}
           onClose={() => setShowAddNetworkModal(false)}
+        />
+      )}
+
+      {reconnectTarget && (
+        <ReconnectModal
+          device={reconnectTarget.device}
+          path={reconnectTarget.path}
+          check={reconnectTarget.check}
+          onDone={() => {
+            setReconnectTarget(null);
+            refresh();
+          }}
+          onClose={() => setReconnectTarget(null)}
         />
       )}
     </div>

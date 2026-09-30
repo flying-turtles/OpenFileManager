@@ -66,7 +66,7 @@ pub async fn get_duplicate_files_page(
 
 /// Remove a file from disk. Default is the Trash (recoverable, external
 /// volumes use their own .Trashes); `permanent` bypasses the Trash entirely.
-async fn remove_from_disk(full_path: std::path::PathBuf, permanent: bool) -> Result<(), AppError> {
+pub(crate) async fn remove_from_disk(full_path: std::path::PathBuf, permanent: bool) -> Result<(), AppError> {
     tokio::task::spawn_blocking(move || {
         if permanent {
             std::fs::remove_file(&full_path)?;

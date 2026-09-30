@@ -1071,33 +1071,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "file-manager-rust"
-version = "0.1.0"
-dependencies = [
- "blake3",
- "chrono",
- "futures",
- "ignore",
- "image",
- "libc",
- "log",
- "serde",
- "serde_json",
- "sqlx",
- "sysinfo",
- "tauri",
- "tauri-build",
- "tauri-plugin-dialog",
- "tauri-plugin-notification",
- "tauri-plugin-opener",
- "thiserror 2.0.18",
- "tokio",
- "tokio-util",
- "trash",
- "uuid",
-]
-
-[[package]]
 name = "find-msvc-tools"
 version = "0.1.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2794,6 +2767,34 @@ dependencies = [
  "is-wsl",
  "libc",
  "pathdiff",
+]
+
+[[package]]
+name = "open-file-manager"
+version = "0.1.0"
+dependencies = [
+ "blake3",
+ "chrono",
+ "futures",
+ "ignore",
+ "image",
+ "libc",
+ "log",
+ "serde",
+ "serde_json",
+ "sqlx",
+ "sysinfo",
+ "tauri",
+ "tauri-build",
+ "tauri-plugin-dialog",
+ "tauri-plugin-notification",
+ "tauri-plugin-opener",
+ "tempfile",
+ "thiserror 2.0.18",
+ "tokio",
+ "tokio-util",
+ "trash",
+ "uuid",
 ]
 
 [[package]]

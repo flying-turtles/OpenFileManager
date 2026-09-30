@@ -1,10 +1,22 @@
-import { useEffect, useState, useMemo } from "react";
+import { useEffect, useState, useMemo, useCallback } from "react";
 import { useProjects } from "../hooks/useProjects";
 import { useDevices } from "../hooks/useDevices";
 import { FileTable } from "../components/FileTable";
 import { BulkDeleteModal } from "../components/BulkDeleteModal";
-import { getFileSafety, deleteFileCopy, bulkDeleteFileCopies } from "../api/commands";
-import type { Project, FileLocation, FileSafety, BulkDeleteResult, BulkDeleteEvent } from "../types";
+import {
+  getFileSafety,
+  deleteFileCopy,
+  bulkDeleteFileCopies,
+  getProjectDiffDevices,
+} from "../api/commands";
+import type {
+  Project,
+  FileLocation,
+  FileSafety,
+  BulkDeleteResult,
+  BulkDeleteEvent,
+  DiffDeviceOption,
+} from "../types";
 import { formatBytes } from "../utils/format";
 import "./Projects.css";
 
@@ -29,9 +41,12 @@ function sortFiles(files: FileLocation[], key: SortKey, dir: SortDir): FileLocat
 
 interface ProjectsProps {
   onTransferProject: (id: number, title: string) => void;
+  onShowDiff: (projectId: number, projectTitle: string, sotDeviceId: string) => void;
+  /** Open straight to this project's detail view, e.g. from a scan summary. */
+  initialProjectId?: number;
 }
 
-export function Projects({ onTransferProject }: ProjectsProps) {
+export function Projects({ onTransferProject, onShowDiff, initialProjectId }: ProjectsProps) {
   const { projects, selected, loading, refresh, select, create, update, remove, setSelected } =
     useProjects();
   const { devices } = useDevices();
@@ -51,6 +66,8 @@ export function Projects({ onTransferProject }: ProjectsProps) {
   const [dupDeviceFilter, setDupDeviceFilter] = useState("");
   const [sameDriveOnly, setSameDriveOnly] = useState(false);
   const [showBulkDelete, setShowBulkDelete] = useState(false);
+  const [diffDevices, setDiffDevices] = useState<DiffDeviceOption[]>([]);
+  const [sotDeviceId, setSotDeviceId] = useState("");
 
   useEffect(() => {
     refresh();
@@ -75,7 +92,7 @@ export function Projects({ onTransferProject }: ProjectsProps) {
   }, [selected]);
 
   // Reset filters when opening a new project
-  const openDetail = async (id: number) => {
+  const openDetail = useCallback(async (id: number) => {
     setSafetyFilter("all");
     setExtFilter("");
     setDupDeviceFilter("");
@@ -84,7 +101,31 @@ export function Projects({ onTransferProject }: ProjectsProps) {
     setSortDir("asc");
     await select(id);
     setView("detail");
-  };
+  }, [select]);
+
+  // Deep link from elsewhere in the app (scan summary project chips)
+  useEffect(() => {
+    if (initialProjectId !== undefined) {
+      openDetail(initialProjectId);
+    }
+  }, [initialProjectId, openDetail]);
+
+  useEffect(() => {
+    const id = selected?.project.id;
+    if (view !== "detail" || id === undefined) return;
+    setSotDeviceId("");
+    let cancelled = false;
+    getProjectDiffDevices(id)
+      .then((d) => {
+        if (!cancelled) setDiffDevices(d);
+      })
+      .catch(() => {
+        if (!cancelled) setDiffDevices([]);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [view, selected?.project.id]);
 
   const openCreate = () => {
     setTitle("");
@@ -308,6 +349,24 @@ export function Projects({ onTransferProject }: ProjectsProps) {
           <div className="flex-row gap-8">
             <button onClick={() => { setSelected(null); setView("list"); }}>Back</button>
             <button onClick={() => openEdit(project)}>Edit</button>
+            <select
+              value={sotDeviceId}
+              onChange={(e) => setSotDeviceId(e.target.value)}
+              aria-label="Source of truth"
+            >
+              <option value="">Source of truth...</option>
+              {diffDevices.map((d) => (
+                <option key={d.deviceId} value={d.deviceId} disabled={!d.isConnected}>
+                  {d.label} ({d.fileCount}){d.isConnected ? "" : " - offline"}
+                </option>
+              ))}
+            </select>
+            <button
+              disabled={!sotDeviceId}
+              onClick={() => onShowDiff(project.id, project.title, sotDeviceId)}
+            >
+              Show diff
+            </button>
             <button onClick={() => onTransferProject(project.id, project.title)}>Transfer to...</button>
             <button className="btn-danger" onClick={() => handleDeleteProject(project.id)}>Delete</button>
           </div>

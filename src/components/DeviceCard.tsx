@@ -10,9 +10,10 @@ interface Props {
   onVerify?: (device: StorageDevice) => void;
   verifyDisabled?: boolean;
   onRemove: (deviceId: string) => void;
+  onReconnect?: (device: StorageDevice) => void;
 }
 
-export function DeviceCard({ device, onSetType, onSetSpeed, onScan, onVerify, verifyDisabled, onRemove }: Props) {
+export function DeviceCard({ device, onSetType, onSetSpeed, onScan, onVerify, verifyDisabled, onRemove, onReconnect }: Props) {
   const hasTotal = device.totalBytes > 0;
   const usedBytes = hasTotal ? device.totalBytes - device.availableBytes : 0;
   const usedPct = hasTotal ? (usedBytes / device.totalBytes) * 100 : 0;
@@ -83,6 +84,14 @@ export function DeviceCard({ device, onSetType, onSetSpeed, onScan, onVerify, ve
             title="Fully re-hash all indexed files on this drive to detect corruption"
           >
             Verify
+          </button>
+        )}
+        {!device.isConnected && onReconnect && (
+          <button
+            onClick={() => onReconnect(device)}
+            title="Point this device at a new folder — indexed files stay valid"
+          >
+            Reconnect
           </button>
         )}
         <button className="btn-danger" onClick={() => onRemove(device.id)}>

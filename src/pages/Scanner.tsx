@@ -1,21 +1,35 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useMemo } from "react";
 import { getCurrentWebviewWindow } from "@tauri-apps/api/webviewWindow";
 import { open } from "@tauri-apps/plugin-dialog";
 import type { StorageDevice, PendingScan } from "../types";
 import { useScanProgress } from "../hooks/useScanProgress";
+import { useDevices } from "../hooks/useDevices";
 import { ProgressBar } from "../components/ProgressBar";
+import { ScanSummaryPanel } from "../components/ScanSummaryPanel";
 import { getPendingScans, dismissPendingScan } from "../api/commands";
 import "./Scanner.css";
 
 interface Props {
   initialDevice?: StorageDevice;
+  onOpenProject: (id: number) => void;
 }
 
-export function Scanner({ initialDevice }: Props) {
+export function Scanner({ initialDevice, onOpenProject }: Props) {
   const [target, setTarget] = useState(initialDevice?.mountPoint || "");
   const [dragOver, setDragOver] = useState(false);
   const [pendingScans, setPendingScans] = useState<PendingScan[]>([]);
   const progress = useScanProgress();
+  const { devices } = useDevices();
+
+  // The path the finished summary describes. Pinned at scan start so editing
+  // the input afterwards can't silently repoint the summary at another path.
+  const [scannedTarget, setScannedTarget] = useState("");
+
+  const deviceNames = useMemo(() => {
+    const map: Record<string, string> = {};
+    for (const d of devices) map[d.id] = d.label;
+    return map;
+  }, [devices]);
 
   useEffect(() => {
     if (initialDevice?.mountPoint) {
@@ -27,14 +41,22 @@ export function Scanner({ initialDevice }: Props) {
     getPendingScans().then(setPendingScans);
   }, [progress.paused, progress.finished]);
 
+  const startScan = useCallback(
+    (path: string) => {
+      setScannedTarget(path);
+      progress.scan(path);
+    },
+    [progress]
+  );
+
   const handleStart = () => {
     if (!target) return;
-    progress.scan(target);
+    startScan(target);
   };
 
   const handleResume = (ps: PendingScan) => {
     setTarget(ps.target);
-    progress.scan(ps.target);
+    startScan(ps.target);
   };
 
   const handleDismiss = async (ps: PendingScan) => {
@@ -177,7 +199,7 @@ export function Scanner({ initialDevice }: Props) {
             Scan paused: {progress.scanned} scanned, {progress.hashed} hashed, {progress.added} added
           </span>
           <div className="scan-paused-actions">
-            <button className="btn-primary" onClick={() => progress.scan(target)}>
+            <button className="btn-primary" onClick={() => startScan(target)}>
               Resume
             </button>
             <button onClick={progress.reset}>Dismiss</button>
@@ -186,13 +208,22 @@ export function Scanner({ initialDevice }: Props) {
       )}
 
       {progress.finished && (
-        <div className="scan-result">
-          <span>
-            Scan complete: {progress.scanned} scanned, {progress.hashed} hashed,{" "}
-            {progress.added} added, {progress.removed} removed
-          </span>
-          <button onClick={progress.reset}>New Scan</button>
-        </div>
+        <>
+          <div className="scan-result">
+            <span>
+              Scan complete: {progress.scanned} scanned, {progress.hashed} hashed,{" "}
+              {progress.added} added, {progress.removed} removed
+            </span>
+            <button onClick={progress.reset}>New Scan</button>
+          </div>
+          {scannedTarget && (
+            <ScanSummaryPanel
+              target={scannedTarget}
+              deviceNames={deviceNames}
+              onOpenProject={onOpenProject}
+            />
+          )}
+        </>
       )}
     </div>
   );

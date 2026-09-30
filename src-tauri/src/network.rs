@@ -153,35 +153,43 @@ pub fn mount_nfs(host: &str, export_path: &str, mount_point: &str) -> Result<(),
 }
 
 pub fn unmount_drive(mount_point: &str) -> Result<(), AppError> {
-    let output = Command::new("umount")
-        .arg(mount_point)
-        .output()?;
-
-    if !output.status.success() {
-        return Err(AppError::General(
-            String::from_utf8_lossy(&output.stderr).to_string(),
-        ));
+    if is_mountpoint(mount_point) {
+        let output = Command::new("umount").arg(mount_point).output()?;
+        if !output.status.success() {
+            // Stuck/dead SMB mounts often refuse a normal umount — force it
+            let force = Command::new("umount").args(["-f", mount_point]).output()?;
+            if !force.status.success() && is_mountpoint(mount_point) {
+                return Err(AppError::General(
+                    String::from_utf8_lossy(&force.stderr).to_string(),
+                ));
+            }
+        }
     }
-
-    // Remove empty mount dir
+    // Already-unmounted is success: clean up the leftover local dir so the
+    // drive can be mounted again. A stray id marker here is on the LOCAL
+    // disk (written while the share was dead) — never valid, remove it.
     let path = Path::new(mount_point);
-    if path.exists() && path.read_dir().map(|mut d| d.next().is_none()).unwrap_or(false) {
-        let _ = std::fs::remove_dir(path);
-    }
+    let marker = path.join(crate::devices::FILEMANAGER_ID_FILE);
+    let _ = std::fs::remove_file(marker);
+    let _ = std::fs::remove_dir(path); // only succeeds when empty
     Ok(())
 }
 
 pub fn is_mountpoint(mount_point: &str) -> bool {
-    let path = Path::new(mount_point);
-    if !path.exists() {
-        return false;
-    }
-    // Check via stat: if mount_point's device differs from parent's device, it's a mountpoint
+    // Parse mount(8) lines exactly: "//src on /path (smbfs, ...)". Substring
+    // matching confuses prefixes ("Storagebox" vs "Storagebox Media"). No
+    // stat here on purpose — stat on a dead network mount hangs for minutes.
     Command::new("mount")
         .output()
         .map(|o| {
             let stdout = String::from_utf8_lossy(&o.stdout);
-            stdout.lines().any(|line| line.contains(&format!(" on {} ", mount_point)))
+            stdout.lines().any(|line| {
+                line.find(" on ").map_or(false, |idx| {
+                    let rest = &line[idx + 4..];
+                    let mp = rest.rsplit_once(" (").map_or(rest, |(p, _)| p);
+                    mp == mount_point
+                })
+            })
         })
         .unwrap_or(false)
 }

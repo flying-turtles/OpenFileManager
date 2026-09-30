@@ -2,10 +2,12 @@ mod backup;
 mod commands;
 mod db;
 mod devices;
+mod diff;
 mod error;
 mod hasher;
 mod importer;
 mod models;
+mod mover;
 mod network;
 mod scanner;
 mod similarity;
@@ -47,10 +49,14 @@ pub fn run() {
                 scan_target: Arc::new(Mutex::new(None)),
                 import_cancel_token: Arc::new(Mutex::new(None)),
                 import_analysis: Arc::new(Mutex::new(None)),
+                move_cancel_token: Arc::new(Mutex::new(None)),
+                move_plan: Arc::new(Mutex::new(None)),
                 transfer_cancel_token: Arc::new(Mutex::new(None)),
                 transfer_resolved: Arc::new(Mutex::new(None)),
                 similar_cancel_token: Arc::new(Mutex::new(None)),
                 verify_cancel_token: Arc::new(Mutex::new(None)),
+                diff_cancel_token: Arc::new(Mutex::new(None)),
+                diff_copy_cancel_token: Arc::new(Mutex::new(None)),
             });
 
             let handle = app.handle().clone();
@@ -119,6 +125,20 @@ pub fn run() {
             commands::analyze_sd_card,
             commands::start_import,
             commands::cancel_import,
+            commands::get_import_cleanup_preview,
+            commands::delete_imported_source_files,
+            commands::plan_move,
+            commands::start_move,
+            commands::cancel_move,
+            commands::get_scan_summary,
+            commands::get_scan_cleanup_preview,
+            commands::delete_redundant_scanned_files,
+            commands::get_project_diff_devices,
+            commands::compute_project_diff,
+            commands::cancel_project_diff,
+            commands::copy_diff_files,
+            commands::cancel_diff_copy,
+            commands::purge_diff_locations,
             commands::eject_device,
             commands::create_project,
             commands::get_projects,
@@ -131,9 +151,12 @@ pub fn run() {
             commands::unmount_network_drive,
             commands::remove_network_drive,
             commands::add_location,
+            commands::check_reconnect_target,
+            commands::reconnect_device,
             commands::resolve_file_path,
             commands::get_thumbnail,
             commands::open_file,
+            commands::reveal_in_finder,
             commands::check_project_transfer,
             commands::start_project_transfer,
             commands::cancel_project_transfer,

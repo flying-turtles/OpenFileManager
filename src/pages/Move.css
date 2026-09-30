@@ -1,0 +1,141 @@
+.move-layout {
+  display: grid;
+  grid-template-columns: 1fr 240px 1fr;
+  gap: 16px;
+  align-items: start;
+}
+
+.move-pane {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 12px;
+  min-width: 0;
+}
+
+.move-pane h3 {
+  margin-bottom: 8px;
+  font-size: 14px;
+}
+
+.move-pane select {
+  width: 100%;
+  margin-bottom: 8px;
+}
+
+.move-crumb {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
+.move-crumb-path {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+.move-listing {
+  max-height: 420px;
+  overflow-y: auto;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+}
+
+.move-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 8px;
+  border-bottom: 1px solid var(--border);
+  font-size: 13px;
+}
+
+.move-row:last-child {
+  border-bottom: none;
+}
+
+.move-row-name {
+  flex: 1;
+  min-width: 0;
+  text-align: left;
+  background: none;
+  border: none;
+  padding: 2px 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: inherit;
+}
+
+.move-row-name:disabled {
+  cursor: default;
+  opacity: 1;
+}
+
+.move-row-size {
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
+.move-empty {
+  padding: 12px;
+  text-align: center;
+  color: var(--text-muted);
+  font-size: 13px;
+}
+
+.move-controls {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding-top: 32px;
+}
+
+.move-selected-count {
+  text-align: center;
+  font-size: 13px;
+  color: var(--text-muted);
+}
+
+.move-permanent {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+}
+
+.move-plan,
+.move-progress,
+.move-result {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  font-size: 13px;
+}
+
+.move-plan-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.move-failures {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  max-height: 160px;
+  overflow-y: auto;
+}
+
+.move-failure {
+  font-size: 12px;
+  color: var(--danger, #c0392b);
+}

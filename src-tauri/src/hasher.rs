@@ -45,3 +45,11 @@ pub fn hash_file_full_sync(path: &Path) -> Result<String, AppError> {
     }
     Ok(hasher.finalize().to_hex().to_string())
 }
+
+pub async fn hash_file_full(path: &Path) -> Result<String, AppError> {
+    let path = path.to_path_buf();
+    let hash = spawn_blocking(move || hash_file_full_sync(&path))
+        .await
+        .map_err(|e| AppError::General(e.to_string()))??;
+    Ok(hash)
+}
