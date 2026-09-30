@@ -144,7 +144,7 @@ export function Backup() {
                 type="text"
                 value={database}
                 onChange={(e) => setDatabase(e.target.value)}
-                placeholder="filemanager_backup"
+                placeholder="openfilemanager_backup"
               />
             </div>
             <div className="form-group">

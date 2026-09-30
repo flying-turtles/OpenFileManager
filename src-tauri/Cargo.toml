@@ -1,12 +1,12 @@
 [package]
-name = "file-manager-rust"
+name = "open-file-manager"
 version = "0.1.0"
 description = "Photo/video file manager tracking locations across drives"
-authors = ["lars"]
+authors = ["FlyingTurtle"]
 edition = "2021"
 
 [lib]
-name = "file_manager_rust_lib"
+name = "open_file_manager_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
 
 [build-dependencies]

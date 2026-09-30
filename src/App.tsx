@@ -94,7 +94,7 @@ function App() {
   return (
     <div className="app">
       <nav className="sidebar">
-        <div className="nav-title">FileManager</div>
+        <div className="nav-title">OpenFileManager</div>
         <button className={page === "dashboard" ? "active" : ""} onClick={() => setPage("dashboard")}>
           Dashboard
         </button>
